@@ -1,0 +1,13 @@
+{
+  "name": "codex-collab",
+  "owner": {
+    "name": "masuP9"
+  },
+  "plugins": [
+    {
+      "name": "codex-collab",
+      "source": "./",
+      "description": "Claude Code と OpenAI Codex CLI の協調タスク実行プラグイン"
+    }
+  ]
+}
