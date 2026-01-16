@@ -1,0 +1,29 @@
+# Codex-Collab Protocol Cheatsheet v1.0
+# Minimum viable header for structured communication between Claude Code and Codex CLI
+# Full schema: protocol-schema.yaml
+
+protocol: codex-collab/v1
+format: yaml
+
+rules:
+  - respond with exactly one top-level YAML mapping
+  - include required fields: type, id, status, body
+  - if unsure or blocked, use type=action_request with clarifying questions
+
+types:
+  task_card:
+    description: Task definition with acceptance criteria
+    body: {title, context, requirements, acceptance_criteria, proposed_steps, risks, test_considerations}
+  result_report:
+    description: Execution results with check status
+    body: {summary, changes, tests, risks, checks}
+  action_request:
+    description: Request for information or decision
+    body: {question, options, expected_response}
+  review:
+    description: Review verdict and findings
+    body: {verdict, summary, findings, suggestions}
+
+status: [ok, partial, blocked]
+verdict: [pass, conditional, fail]
+severity: [low, medium, high]

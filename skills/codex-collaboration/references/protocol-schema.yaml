@@ -1,0 +1,285 @@
+# Codex-Collab Inter-Agent Communication Protocol v1.0
+#
+# This schema defines the structured communication format between
+# Claude Code and Codex CLI for the codex-collab plugin.
+
+message_envelope:
+  description: Common wrapper for all messages
+  required_fields:
+    schema_version: "string # e.g., '1.0'"
+    message_id: "string # unique id"
+    type: "enum # task_card | result_report | action_request | review"
+    from: "enum # codex | claude"
+    to: "enum # codex | claude | both"
+    timestamp: "string # ISO-8601"
+  optional_fields:
+    thread_id: "string # conversation/session id"
+    correlation_id: "string # ties request/response"
+    parent_id: "string # previous message id"
+    priority: "enum # low | normal | high"
+    tags: "list[string]"
+    meta: "object # extensible kv"
+  example:
+    schema_version: "1.0"
+    message_id: "msg-001"
+    type: "task_card"
+    from: "codex"
+    to: "claude"
+    timestamp: "2025-01-20T12:00:00Z"
+    thread_id: "thread-42"
+    correlation_id: "corr-77"
+    priority: "normal"
+
+task_card_schema:
+  description: Codex sends task definitions with acceptance criteria (Quality Gates)
+  required_fields:
+    envelope: "*message_envelope"
+    task:
+      task_id: "string"
+      title: "string"
+      objective: "string"
+      acceptance_criteria: "list[string] # quality gates"
+      proposed_steps: "list[string] # task decomposition queue"
+      state: "enum # proposed | accepted | in_progress | completed | reviewed"
+  optional_fields:
+    task:
+      context: "string"
+      files: "list[string]"
+      dependencies: "list[string]"
+      risks: "list[string]"
+      deadline: "string # ISO-8601"
+      blockers: "list[string]"
+      questions: "list[string]"
+  example:
+    envelope:
+      schema_version: "1.0"
+      message_id: "msg-101"
+      type: "task_card"
+      from: "codex"
+      to: "claude"
+      timestamp: "2025-01-20T12:01:00Z"
+      thread_id: "thread-42"
+    task:
+      task_id: "task-9"
+      title: "Define message schemas"
+      objective: "Produce YAML schemas for inter-agent protocol"
+      acceptance_criteria:
+        - "Defines message envelope"
+        - "Defines task_card, result_report, action_request, review"
+        - "Includes example workflow"
+      proposed_steps:
+        - "Draft envelope and core types"
+        - "Add workflow states and error model"
+        - "Provide examples"
+      state: "proposed"
+
+result_report_schema:
+  description: Claude reports execution results with check status
+  required_fields:
+    envelope: "*message_envelope"
+    result:
+      task_id: "string"
+      state: "enum # in_progress | completed | blocked | failed"
+      summary: "string"
+      checks:
+        - criteria: "string"
+          status: "enum # pass | fail | partial"
+          notes: "string"
+  optional_fields:
+    result:
+      outputs: "list[string] # links, file paths"
+      next_steps: "list[string]"
+      blockers: "list[string]"
+      questions: "list[string]"
+      errors:
+        - code: "string"
+          message: "string"
+          details: "object"
+  example:
+    envelope:
+      schema_version: "1.0"
+      message_id: "msg-202"
+      type: "result_report"
+      from: "claude"
+      to: "codex"
+      timestamp: "2025-01-20T12:05:00Z"
+      thread_id: "thread-42"
+      correlation_id: "corr-77"
+    result:
+      task_id: "task-9"
+      state: "completed"
+      summary: "Drafted schemas and example workflow"
+      checks:
+        - criteria: "Defines message envelope"
+          status: "pass"
+          notes: "Included required/optional fields and example"
+        - criteria: "Includes example workflow"
+          status: "pass"
+          notes: "Provided 4-message sequence"
+
+action_request_schema:
+  description: Bidirectional action requests (Cross-tool Autonomy)
+  required_fields:
+    envelope: "*message_envelope"
+    action:
+      action_id: "string"
+      action_type: "enum # request_info | request_review | request_task | request_decision | request_execution"
+      description: "string"
+  optional_fields:
+    action:
+      payload: "object"
+      expected_response_type: "enum # result_report | review | action_request"
+      deadline: "string # ISO-8601"
+  example:
+    envelope:
+      schema_version: "1.0"
+      message_id: "msg-301"
+      type: "action_request"
+      from: "claude"
+      to: "codex"
+      timestamp: "2025-01-20T12:06:00Z"
+      thread_id: "thread-42"
+    action:
+      action_id: "act-55"
+      action_type: "request_review"
+      description: "Review the schema for missing fields"
+      expected_response_type: "review"
+
+review_schema:
+  description: Codex provides review verdict and findings
+  required_fields:
+    envelope: "*message_envelope"
+    review:
+      review_id: "string"
+      task_id: "string"
+      verdict: "enum # pass | conditional | fail"
+      findings:
+        - severity: "enum # low | medium | high"
+          message: "string"
+          suggestion: "string"
+  optional_fields:
+    review:
+      required_changes: "list[string]"
+      follow_up_questions: "list[string]"
+  example:
+    envelope:
+      schema_version: "1.0"
+      message_id: "msg-401"
+      type: "review"
+      from: "codex"
+      to: "claude"
+      timestamp: "2025-01-20T12:08:00Z"
+      thread_id: "thread-42"
+    review:
+      review_id: "rev-1"
+      task_id: "task-9"
+      verdict: "conditional"
+      findings:
+        - severity: "medium"
+          message: "No explicit extensibility note"
+          suggestion: "Add meta field guidance"
+
+workflow_states:
+  description: Task state machine
+  task_states:
+    - proposed
+    - accepted
+    - in_progress
+    - completed
+    - reviewed
+  transitions:
+    - "proposed -> accepted"
+    - "accepted -> in_progress"
+    - "in_progress -> completed"
+    - "completed -> reviewed"
+    - "any -> blocked"
+    - "any -> failed"
+
+error_handling:
+  description: How to represent failures and blockers
+  representation:
+    result.errors:
+      - code: "string # stable error id"
+        message: "string"
+        details: "object"
+    task.blockers: "list[string]"
+    result.questions: "list[string]"
+  guidance:
+    - "Use state=blocked when progress cannot continue"
+    - "Use state=failed when acceptance criteria cannot be met"
+    - "Use action_request with request_info to unblock"
+
+extensibility:
+  description: How to evolve the protocol
+  strategy:
+    - "Bump schema_version for breaking changes"
+    - "Add new message types without modifying existing types"
+    - "Use envelope.meta and action.payload for forward-compatible fields"
+
+example_workflow:
+  description: A typical 4-message exchange
+  messages:
+    - schema_version: "1.0"
+      message_id: "msg-501"
+      type: "task_card"
+      from: "codex"
+      to: "claude"
+      timestamp: "2025-01-20T12:10:00Z"
+      thread_id: "thread-77"
+      task:
+        task_id: "task-21"
+        title: "Define protocol schema"
+        objective: "Create YAML schema for inter-agent protocol"
+        acceptance_criteria:
+          - "All four schemas defined"
+          - "Example workflow included"
+        proposed_steps:
+          - "Draft envelope"
+          - "Draft schemas"
+          - "Provide examples"
+        state: "proposed"
+
+    - schema_version: "1.0"
+      message_id: "msg-502"
+      type: "action_request"
+      from: "claude"
+      to: "codex"
+      timestamp: "2025-01-20T12:11:00Z"
+      thread_id: "thread-77"
+      action:
+        action_id: "act-21"
+        action_type: "request_decision"
+        description: "Confirm task state transition to accepted"
+        expected_response_type: "result_report"
+
+    - schema_version: "1.0"
+      message_id: "msg-503"
+      type: "result_report"
+      from: "codex"
+      to: "claude"
+      timestamp: "2025-01-20T12:12:00Z"
+      thread_id: "thread-77"
+      result:
+        task_id: "task-21"
+        state: "in_progress"
+        summary: "Accepted and ready for implementation"
+        checks:
+          - criteria: "All four schemas defined"
+            status: "partial"
+            notes: "Pending completion"
+
+    - schema_version: "1.0"
+      message_id: "msg-504"
+      type: "result_report"
+      from: "claude"
+      to: "codex"
+      timestamp: "2025-01-20T12:20:00Z"
+      thread_id: "thread-77"
+      result:
+        task_id: "task-21"
+        state: "completed"
+        summary: "Schemas and examples delivered"
+        checks:
+          - criteria: "All four schemas defined"
+            status: "pass"
+            notes: "Delivered with examples"
