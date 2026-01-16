@@ -21,12 +21,15 @@ $ARGUMENTS
 
 Check for project-specific settings:
 - Read `.claude/codex-collab.local.md` if it exists
-- Extract YAML frontmatter for: model, sandbox
+- Extract YAML frontmatter for: model, sandbox, discussion settings
 - Apply settings priority: command args > project settings > defaults
 
 **Default settings:**
 - model: (Codex default)
 - sandbox: read-only
+- discussion.max_iterations: 3
+- discussion.user_confirm: on_important
+- discussion.history_mode: summarize
 
 ### Step 2: Analyze Task
 
@@ -103,18 +106,64 @@ done
 
 Timeout after 120 seconds. If timeout, ask user if Codex is still running.
 
-### Step 5: Read and Validate Plan
+### Step 5: Read and Process Response
 
 Once completion is detected:
 
 1. Read the output file: `cat "$CODEX_OUTPUT"`
-2. Parse the plan from Codex's response
-3. Validate for completeness:
+2. Parse the YAML response from Codex
+3. Check `next_action` field (evaluated first, takes precedence):
+   - If `next_action: continue` or `type: action_request` → Go to Step 5a (Discussion Loop)
+   - If `next_action: stop` → Continue to Step 6
+   - If `next_action` is missing → Default to `stop` for task_card/review, `continue` for action_request
+4. Validate for completeness:
    - [ ] Files to modify are clearly listed
    - [ ] Steps are specific and actionable
    - [ ] Risks are identified
 
 Present the plan to the user and wait for confirmation before implementing.
+
+### Step 5a: Multi-turn Discussion Loop (Optional)
+
+If Codex requests clarification or wants to continue discussion:
+
+**1. Track discussion state:**
+- Increment round counter
+- Check if round < max_iterations (default: 3)
+
+**2. Prepare follow-up prompt with history:**
+```
+## Conversation History
+
+### Previous Rounds Summary (if round > 2)
+[Summarize key decisions, unresolved questions, constraints]
+
+### Round {N-1}
+Claude: [Your previous message]
+Codex: [Codex's response]
+
+### Round {N}
+Claude: [Your current response to Codex's question/request]
+
+## Continue Discussion
+
+[Your response addressing Codex's question or providing requested information]
+
+Please respond with next_action: stop when discussion is complete.
+```
+
+**3. Send follow-up to Codex:**
+- Launch Codex with updated prompt
+- Wait for completion
+- Return to Step 5
+
+**4. User confirmation (if user_confirm: on_important):**
+- Ask user before continuing if discussion involves major decisions
+- Skip confirmation for clarifying questions
+
+**5. Force stop conditions:**
+- round >= max_iterations → Summarize and proceed
+- Repeated same question → Ask user for direction
 
 ### Step 6: Implement
 
@@ -232,3 +281,4 @@ If timeout (120s) without completion marker:
 - Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)
 - Each Codex call is independent (no session state between calls)
 - **Important**: Stage changes with `git add -A` before review so Codex can see new files (ensures visibility regardless of file discovery method)
+- **Multi-turn discussion**: Use `next_action: continue|stop` to control discussion flow. Max iterations default is 3.

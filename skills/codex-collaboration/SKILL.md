@@ -161,6 +161,9 @@ sandbox: read-only
 Parse YAML frontmatter for:
 - `model`: Codex model to use
 - `sandbox`: read-only | workspace-write | danger-full-access
+- `discussion.max_iterations`: Maximum rounds for multi-turn discussion (default: 3)
+- `discussion.user_confirm`: When to ask user confirmation (never | always | on_important)
+- `discussion.history_mode`: How to handle history (full | summarize)
 
 ### Settings Priority
 
@@ -175,6 +178,9 @@ Apply settings in this order (later overrides earlier):
 
 Always start with secure defaults:
 - `sandbox: read-only` - Codex cannot modify files
+- `discussion.max_iterations: 3` - Prevent runaway discussions
+- `discussion.user_confirm: on_important` - Ask user for major decisions
+- `discussion.history_mode: summarize` - Efficient token usage
 
 ## Quality Gates
 
@@ -316,6 +322,7 @@ types:
 status: [ok, partial, blocked]
 verdict: [pass, conditional, fail]
 severity: [low, medium, high]
+next_action: [continue, stop]
 ```
 
 ### Message Types
@@ -332,6 +339,29 @@ severity: [low, medium, high]
 - **Lenient**: Require only top-level envelope and core keys
 - **Tolerant**: Accept extra fields and minor formatting differences
 - **Fallback**: If YAML parsing fails, fall back to unstructured parsing
+
+### Multi-turn Discussion
+
+The protocol supports iterative discussions between Claude and Codex:
+
+**Flow Control:**
+- `next_action: continue` - Request further discussion
+- `next_action: stop` - Discussion complete
+- `type: action_request` - Implies `next_action: continue`
+
+**History Management:**
+- Keep latest 2 rounds in full
+- Summarize earlier rounds (key decisions, unresolved questions, constraints)
+
+**Termination Conditions:**
+1. `next_action: stop` received
+2. `max_iterations` reached (default: 3)
+3. Repeated same question detected
+
+**User Confirmation (`user_confirm` setting):**
+- `never`: Fully automatic discussion
+- `always`: Confirm each round
+- `on_important`: Confirm only for major decisions (default)
 
 ## References
 

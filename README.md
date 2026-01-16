@@ -64,6 +64,9 @@ sandbox: read-only
 |-----------|-----------|------|
 | `model` | (Codexデフォルト) | 使用するモデル (o3, o4-mini等) |
 | `sandbox` | `read-only` | サンドボックスモード (read-only, workspace-write, danger-full-access) |
+| `discussion.max_iterations` | `3` | マルチターン議論の最大ラウンド数 |
+| `discussion.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
+| `discussion.history_mode` | `summarize` | 履歴管理方式: full=全履歴保持, summarize=最新2ラウンドのみ全文 |
 
 ### 設定の優先順位
 
@@ -103,6 +106,7 @@ rules:
   - respond with exactly one top-level YAML mapping
   - include required fields: type, id, status, body
   - if unsure or blocked, use type=action_request with clarifying questions
+  - include next_action (continue|stop) to signal discussion flow
 types:
   task_card: {body: title, context, requirements, acceptance_criteria, proposed_steps, risks, test_considerations}
   result_report: {body: summary, changes, tests, risks, checks}
@@ -111,6 +115,7 @@ types:
 status: [ok, partial, blocked]
 verdict: [pass, conditional, fail]
 severity: [low, medium, high]
+next_action: [continue, stop]
 ```
 
 ### メッセージタイプ
@@ -182,6 +187,18 @@ body:
 - **寛容**: 必須フィールドのみを検証
 - **許容**: 追加フィールドを受け入れる
 - **フォールバック**: YAMLパースに失敗した場合は非構造化パースに切り替え
+
+### マルチターン議論
+
+Codex が `next_action: continue` または `type: action_request` で応答した場合、Claude Code は議論ループに入ります：
+
+1. Claude が Codex の質問/リクエストに応答
+2. Codex が追加の回答または最終結果を返す
+3. `next_action: stop` または `max_iterations` に達するまで継続
+
+**履歴管理 (`history_mode` 設定):**
+- `summarize` (デフォルト): 最新2ラウンドは全文を保持、それ以前は要約
+- `full`: 全ラウンドの履歴を保持（トークン消費大）
 
 ### 関連ファイル
 

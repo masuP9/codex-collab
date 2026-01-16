@@ -11,6 +11,7 @@ rules:
   - respond with exactly one top-level YAML mapping
   - include required fields: type, id, status, body
   - if unsure or blocked, use type=action_request with clarifying questions
+  - include next_action (continue|stop) to signal discussion flow
 types:
   task_card: {body: title, context, requirements, acceptance_criteria, proposed_steps, risks, test_considerations}
   result_report: {body: summary, changes, tests, risks, checks}
@@ -19,6 +20,7 @@ types:
 status: [ok, partial, blocked]
 verdict: [pass, conditional, fail]
 severity: [low, medium, high]
+next_action: [continue, stop]
 
 ---
 
@@ -50,6 +52,7 @@ Respond using the protocol above. Use type=review with:
 type: review
 id: review-{unique_id}
 status: ok
+next_action: stop  # use 'continue' if follow-up review needed
 body:
   verdict: "pass|conditional|fail"
   summary: "One paragraph summary of the review"
@@ -65,7 +68,11 @@ body:
 
 Note: Additional fields (alignment, code_quality, security) are accepted but not required.
 
-If you need more information before reviewing, use type=action_request instead.
+If you need more information before reviewing, use type=action_request with next_action=continue.
+
+For follow-up reviews after fixes:
+- Use next_action=continue if you want to review additional changes
+- Use next_action=stop when review is complete
 
 Provide your review now.
 ```

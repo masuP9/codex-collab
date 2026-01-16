@@ -9,6 +9,7 @@ rules:
   - respond with exactly one top-level YAML mapping
   - include required fields: type, id, status, body
   - if unsure or blocked, use type=action_request with clarifying questions
+  - include next_action (continue|stop) to signal discussion flow
 
 types:
   task_card:
@@ -27,3 +28,9 @@ types:
 status: [ok, partial, blocked]
 verdict: [pass, conditional, fail]
 severity: [low, medium, high]
+next_action: [continue, stop]
+
+# Multi-turn discussion
+# - Use next_action: continue when you need clarification or want to continue discussion
+# - Use next_action: stop when the task is complete or no further discussion needed
+# - Claude will iterate up to max_iterations (default: 3) based on next_action
