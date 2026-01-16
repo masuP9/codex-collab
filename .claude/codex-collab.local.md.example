@@ -5,10 +5,19 @@ Copy this file to `.claude/codex-collab.local.md` and customize for your project
 ---
 model: o4-mini
 sandbox: read-only
+
+# Planning exchange settings (Codex plans → Claude questions → Codex refines)
 exchange:
+  enabled: true              # Global kill-switch for planning exchanges
   max_iterations: 3
-  user_confirm: on_important
-  history_mode: summarize
+  user_confirm: on_important # never | always | on_important
+  history_mode: summarize    # full | summarize
+
+# Review iteration settings (Codex reviews → Claude fixes → Codex re-reviews)
+review:
+  enabled: true              # Enable/disable review iterations
+  max_iterations: 5          # Can be higher than exchange (goal is clear, diff is small)
+  user_confirm: never        # Auto-iterate for reviews
 ---
 
 ## Project-specific Instructions

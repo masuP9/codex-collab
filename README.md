@@ -64,9 +64,13 @@ sandbox: read-only
 |-----------|-----------|------|
 | `model` | (Codexデフォルト) | 使用するモデル (o3, o4-mini等) |
 | `sandbox` | `read-only` | サンドボックスモード (read-only, workspace-write, danger-full-access) |
-| `exchange.max_iterations` | `3` | マルチターン交換の最大ラウンド数 |
+| `exchange.enabled` | `true` | Planning exchangeのグローバルキルスイッチ |
+| `exchange.max_iterations` | `3` | Planning exchangeの最大ラウンド数 |
 | `exchange.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
 | `exchange.history_mode` | `summarize` | 履歴管理方式: full=全履歴保持, summarize=最新2ラウンドのみ全文 |
+| `review.enabled` | `true` | Review iterationの有効化 |
+| `review.max_iterations` | `5` | Review iterationの最大ラウンド数（ゴールが明確なので多め） |
+| `review.user_confirm` | `never` | レビュー時は自動でイテレーション |
 
 ### 設定の優先順位
 
@@ -190,15 +194,38 @@ body:
 
 ### マルチターン交換
 
+#### Planning Exchange（計画段階）
+
 Codex が `next_action: continue` または `type: action_request` で応答した場合、Claude Code は交換ループに入ります：
 
 1. Claude が Codex の質問/リクエストに応答
 2. Codex が追加の回答または最終結果を返す
-3. `next_action: stop` または `max_iterations` に達するまで継続
+3. `next_action: stop` または `exchange.max_iterations` に達するまで継続
 
-**履歴管理 (`history_mode` 設定):**
-- `summarize` (デフォルト): 最新2ラウンドは全文を保持、それ以前は要約
-- `full`: 全ラウンドの履歴を保持（トークン消費大）
+**設定 (`exchange.*`):**
+| 設定 | デフォルト | 説明 |
+|------|-----------|------|
+| `exchange.enabled` | `true` | グローバルキルスイッチ |
+| `exchange.max_iterations` | `3` | 最大イテレーション数 |
+| `exchange.user_confirm` | `on_important` | ユーザー確認タイミング |
+| `exchange.history_mode` | `summarize` | 履歴管理方式 |
+
+#### Review Iteration（レビュー段階）
+
+レビューで CONDITIONAL または FAIL が返された場合、自動的に修正→再レビューのイテレーションが行われます：
+
+1. Claude が指摘事項を修正
+2. Codex が再レビュー
+3. PASS または `review.max_iterations` に達するまで継続
+
+**設定 (`review.*`):**
+| 設定 | デフォルト | 説明 |
+|------|-----------|------|
+| `review.enabled` | `true` | レビューイテレーションの有効化 |
+| `review.max_iterations` | `5` | 最大イテレーション数（ゴールが明確なので多め） |
+| `review.user_confirm` | `never` | 自動でイテレーション |
+
+**注**: `exchange.*` と `review.*` は完全に独立した設定です（継承なし）。
 
 ### 関連ファイル
 

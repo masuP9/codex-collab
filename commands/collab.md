@@ -21,15 +21,21 @@ $ARGUMENTS
 
 Check for project-specific settings:
 - Read `.claude/codex-collab.local.md` if it exists
-- Extract YAML frontmatter for: model, sandbox, exchange settings
+- Extract YAML frontmatter for: model, sandbox, exchange, review settings
 - Apply settings priority: command args > project settings > defaults
 
 **Default settings:**
 - model: (Codex default)
 - sandbox: read-only
-- exchange.max_iterations: 3
-- exchange.user_confirm: on_important
-- exchange.history_mode: summarize
+- **Planning exchange** (exchange.*):
+  - exchange.enabled: true
+  - exchange.max_iterations: 3
+  - exchange.user_confirm: on_important
+  - exchange.history_mode: summarize
+- **Review iteration** (review.*):
+  - review.enabled: true
+  - review.max_iterations: 5
+  - review.user_confirm: never
 
 ### Step 2: Analyze Task
 
@@ -127,9 +133,12 @@ Present the plan to the user and wait for confirmation before implementing.
 
 If Codex requests clarification or wants to continue the exchange:
 
+**0. Check if exchange is enabled:**
+- If `exchange.enabled: false` → Skip this step, proceed to Step 6
+
 **1. Track exchange state:**
 - Increment round counter
-- Check if round < max_iterations (default: 3)
+- Check if round < exchange.max_iterations (default: 3)
 
 **2. Prepare follow-up prompt with history:**
 ```
@@ -157,12 +166,13 @@ Please respond with next_action: stop when exchange is complete.
 - Wait for completion
 - Return to Step 5
 
-**4. User confirmation (if user_confirm: on_important):**
-- Ask user before continuing if exchange involves major decisions
-- Skip confirmation for clarifying questions
+**4. User confirmation (based on exchange.user_confirm setting):**
+- `never`: Fully automatic exchange
+- `always`: Confirm each round
+- `on_important` (default): Confirm only for major decisions
 
 **5. Force stop conditions:**
-- round >= max_iterations → Summarize and proceed
+- round >= exchange.max_iterations → Summarize and proceed
 - Repeated same question → Ask user for direction
 
 ### Step 6: Implement
@@ -239,10 +249,38 @@ done
 **If PASS:**
 Report completion to user with summary
 
-**If CONDITIONAL:**
-Apply suggested improvements, then complete
+**If CONDITIONAL or FAIL (with review.enabled: true):**
 
-**If FAIL:**
+**8a. Review Iteration Loop:**
+
+1. **Check if review iteration is enabled:**
+   - If `review.enabled: false` → Present issues to user, no auto-iteration
+   - If `review.enabled: true` → Continue with iteration
+
+2. **Track review iteration state:**
+   - Increment review round counter
+   - Check if round < review.max_iterations (default: 5)
+
+3. **Apply fixes:**
+   - Address findings from the review
+   - Track all modifications
+
+4. **User confirmation (based on review.user_confirm setting):**
+   - `never` (default): Auto-iterate without confirmation
+   - `always`: Confirm each round
+   - `on_important`: Confirm only for high-severity findings
+
+5. **Re-request review:**
+   - Stage changes with `git add -A`
+   - Launch Codex with updated diff
+   - Return to Step 8
+
+6. **Force stop conditions:**
+   - round >= review.max_iterations → Report remaining issues to user
+   - PASS verdict received → Complete
+   - User requests manual handling → Exit loop
+
+**If review.enabled: false:**
 Present issues to user and discuss next steps
 
 ### Step 9: Cleanup
@@ -281,4 +319,6 @@ If timeout (120s) without completion marker:
 - Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)
 - Each Codex call is independent (no session state between calls)
 - **Important**: Stage changes with `git add -A` before review so Codex can see new files (ensures visibility regardless of file discovery method)
-- **Multi-turn exchange**: Use `next_action: continue|stop` to control exchange flow. Max iterations default is 3.
+- **Multi-turn exchange**: Use `next_action: continue|stop` to control exchange flow. Planning exchange max iterations default is 3.
+- **Review iteration**: Enabled by default (`review.enabled: true`). Max iterations default is 5 (higher than exchange because goal is clear and diff is small).
+- **Independent settings**: `exchange.*` and `review.*` are completely independent (no inheritance). Each can be configured separately.

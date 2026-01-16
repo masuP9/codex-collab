@@ -237,9 +237,18 @@ multi_turn_exchange:
       - "Unresolved questions"
       - "Important constraints identified"
   settings:
-    max_iterations: "number # default: 3"
-    user_confirm: "enum # never | always | on_important # default: on_important"
-    history_mode: "enum # full | summarize # default: summarize"
+    exchange:
+      description: "Settings for planning exchange (Codex plans → Claude questions → Codex refines)"
+      enabled: "boolean # default: true - Global kill-switch for all planning exchanges"
+      max_iterations: "number # default: 3"
+      user_confirm: "enum # never | always | on_important # default: on_important"
+      history_mode: "enum # full | summarize # default: summarize"
+    review:
+      description: "Settings for review iteration (Codex reviews → Claude fixes → Codex re-reviews)"
+      enabled: "boolean # default: true - Enable/disable review iterations"
+      max_iterations: "number # default: 5 - Can be higher than exchange (goal is clear, diff is small)"
+      user_confirm: "enum # never | always | on_important # default: never - Auto-iterate for reviews"
+    note: "exchange and review are completely independent configurations (no inheritance)"
 
 extensibility:
   description: How to evolve the protocol
