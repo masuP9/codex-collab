@@ -21,15 +21,15 @@ $ARGUMENTS
 
 Check for project-specific settings:
 - Read `.claude/codex-collab.local.md` if it exists
-- Extract YAML frontmatter for: model, sandbox, discussion settings
+- Extract YAML frontmatter for: model, sandbox, exchange settings
 - Apply settings priority: command args > project settings > defaults
 
 **Default settings:**
 - model: (Codex default)
 - sandbox: read-only
-- discussion.max_iterations: 3
-- discussion.user_confirm: on_important
-- discussion.history_mode: summarize
+- exchange.max_iterations: 3
+- exchange.user_confirm: on_important
+- exchange.history_mode: summarize
 
 ### Step 2: Analyze Task
 
@@ -123,11 +123,11 @@ Once completion is detected:
 
 Present the plan to the user and wait for confirmation before implementing.
 
-### Step 5a: Multi-turn Discussion Loop (Optional)
+### Step 5a: Multi-turn Exchange Loop (Optional)
 
-If Codex requests clarification or wants to continue discussion:
+If Codex requests clarification or wants to continue the exchange:
 
-**1. Track discussion state:**
+**1. Track exchange state:**
 - Increment round counter
 - Check if round < max_iterations (default: 3)
 
@@ -149,7 +149,7 @@ Claude: [Your current response to Codex's question/request]
 
 [Your response addressing Codex's question or providing requested information]
 
-Please respond with next_action: stop when discussion is complete.
+Please respond with next_action: stop when exchange is complete.
 ```
 
 **3. Send follow-up to Codex:**
@@ -158,7 +158,7 @@ Please respond with next_action: stop when discussion is complete.
 - Return to Step 5
 
 **4. User confirmation (if user_confirm: on_important):**
-- Ask user before continuing if discussion involves major decisions
+- Ask user before continuing if exchange involves major decisions
 - Skip confirmation for clarifying questions
 
 **5. Force stop conditions:**
@@ -281,4 +281,4 @@ If timeout (120s) without completion marker:
 - Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)
 - Each Codex call is independent (no session state between calls)
 - **Important**: Stage changes with `git add -A` before review so Codex can see new files (ensures visibility regardless of file discovery method)
-- **Multi-turn discussion**: Use `next_action: continue|stop` to control discussion flow. Max iterations default is 3.
+- **Multi-turn exchange**: Use `next_action: continue|stop` to control exchange flow. Max iterations default is 3.

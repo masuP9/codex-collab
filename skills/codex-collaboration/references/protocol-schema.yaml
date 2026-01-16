@@ -19,8 +19,8 @@ message_envelope:
     priority: "enum # low | normal | high"
     tags: "list[string]"
     meta: "object # extensible kv"
-    next_action: "enum # continue | stop - signals discussion flow"
-    round: "number # current discussion round (1-indexed)"
+    next_action: "enum # continue | stop - signals exchange flow"
+    round: "number # current exchange round (1-indexed)"
   example:
     schema_version: "1.0"
     message_id: "msg-001"
@@ -211,22 +211,22 @@ error_handling:
     - "Use state=failed when acceptance criteria cannot be met"
     - "Use action_request with request_info to unblock"
 
-multi_turn_discussion:
-  description: How to conduct multi-turn discussions between Claude and Codex
+multi_turn_exchange:
+  description: How to conduct multi-turn exchanges between Claude and Codex
   fields:
     next_action:
       type: "enum # continue | stop"
-      description: "Signals whether discussion should continue or end"
+      description: "Signals whether exchange should continue or end"
       usage:
-        continue: "Use when clarification needed, follow-up questions exist, or discussion should proceed"
-        stop: "Use when task is complete, all questions answered, or no further discussion needed"
+        continue: "Use when clarification needed, follow-up questions exist, or exchange should proceed"
+        stop: "Use when task is complete, all questions answered, or no further exchange needed"
     round:
       type: "number"
-      description: "Current discussion round (1-indexed), tracked by Claude"
+      description: "Current exchange round (1-indexed), tracked by Claude"
   control_flow:
-    - "Claude orchestrates the discussion loop"
-    - "If next_action=continue and round < max_iterations, continue discussion"
-    - "If next_action=stop or round >= max_iterations, end discussion"
+    - "Claude orchestrates the exchange loop"
+    - "If next_action=continue and round < max_iterations, continue exchange"
+    - "If next_action=stop or round >= max_iterations, end exchange"
     - "action_request type implies next_action=continue"
   history_management:
     strategy: "sliding_window_with_summary"

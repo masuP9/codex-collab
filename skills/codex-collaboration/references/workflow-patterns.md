@@ -37,8 +37,8 @@ Complete
 - More back-and-forth
 - Slower for simple tasks
 
-**Extension: Multi-turn Discussion**:
-The Review Type can be extended with iterative discussion. When Codex responds with `next_action: continue` or `type: action_request`, Claude enters a discussion loop:
+**Extension: Multi-turn Exchange**:
+The Review Type can be extended with iterative exchange. When Codex responds with `next_action: continue` or `type: action_request`, Claude enters an exchange loop:
 
 ```
 User Request
@@ -195,7 +195,7 @@ Start with default pattern. Switch if:
 | Pattern | Codex Calls | Context Size | Relative Cost |
 |---------|-------------|--------------|---------------|
 | Review | 2 (plan + review) | Medium | Base |
-| Review + Discussion | 2-N | Medium-Large | Base × iterations |
+| Review + Exchange | 2-N | Medium-Large | Base × iterations |
 | Consultation | 0-N | Small each | Lower |
 | Parallel | 1+ | Large | Higher |
 | Divide | Varies | Large | Highest |

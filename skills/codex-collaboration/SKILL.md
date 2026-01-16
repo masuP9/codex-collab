@@ -161,9 +161,9 @@ sandbox: read-only
 Parse YAML frontmatter for:
 - `model`: Codex model to use
 - `sandbox`: read-only | workspace-write | danger-full-access
-- `discussion.max_iterations`: Maximum rounds for multi-turn discussion (default: 3)
-- `discussion.user_confirm`: When to ask user confirmation (never | always | on_important)
-- `discussion.history_mode`: How to handle history (full | summarize)
+- `exchange.max_iterations`: Maximum rounds for multi-turn exchange (default: 3)
+- `exchange.user_confirm`: When to ask user confirmation (never | always | on_important)
+- `exchange.history_mode`: How to handle history (full | summarize)
 
 ### Settings Priority
 
@@ -178,9 +178,9 @@ Apply settings in this order (later overrides earlier):
 
 Always start with secure defaults:
 - `sandbox: read-only` - Codex cannot modify files
-- `discussion.max_iterations: 3` - Prevent runaway discussions
-- `discussion.user_confirm: on_important` - Ask user for major decisions
-- `discussion.history_mode: summarize` - Efficient token usage
+- `exchange.max_iterations: 3` - Prevent runaway exchanges
+- `exchange.user_confirm: on_important` - Ask user for major decisions
+- `exchange.history_mode: summarize` - Efficient token usage
 
 ## Quality Gates
 
@@ -340,13 +340,13 @@ next_action: [continue, stop]
 - **Tolerant**: Accept extra fields and minor formatting differences
 - **Fallback**: If YAML parsing fails, fall back to unstructured parsing
 
-### Multi-turn Discussion
+### Multi-turn Exchange
 
-The protocol supports iterative discussions between Claude and Codex:
+The protocol supports iterative exchanges between Claude and Codex:
 
 **Flow Control:**
-- `next_action: continue` - Request further discussion
-- `next_action: stop` - Discussion complete
+- `next_action: continue` - Request further exchange
+- `next_action: stop` - Exchange complete
 - `type: action_request` - Implies `next_action: continue`
 
 **History Management:**
@@ -359,7 +359,7 @@ The protocol supports iterative discussions between Claude and Codex:
 3. Repeated same question detected
 
 **User Confirmation (`user_confirm` setting):**
-- `never`: Fully automatic discussion
+- `never`: Fully automatic exchange
 - `always`: Confirm each round
 - `on_important`: Confirm only for major decisions (default)
 

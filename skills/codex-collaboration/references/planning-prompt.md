@@ -11,7 +11,7 @@ rules:
   - respond with exactly one top-level YAML mapping
   - include required fields: type, id, status, body
   - if unsure or blocked, use type=action_request with clarifying questions
-  - include next_action (continue|stop) to signal discussion flow
+  - include next_action (continue|stop) to signal exchange flow
 types:
   task_card: {body: title, context, requirements, acceptance_criteria, proposed_steps, risks, test_considerations}
   result_report: {body: summary, changes, tests, risks, checks}
@@ -95,12 +95,12 @@ Claude Code should:
 3. Be lenient with extra fields
 4. Fall back to unstructured parsing if YAML fails
 
-## Multi-turn Discussion
+## Multi-turn Exchange
 
 If Codex responds with `next_action: continue` or `type: action_request`:
 1. Claude processes the response and formulates an answer
 2. Claude sends a follow-up message with conversation history
-3. Discussion continues until `next_action: stop` or max iterations reached
+3. Exchange continues until `next_action: stop` or max iterations reached
 
 History management:
 - Keep latest 2 rounds in full

@@ -11,7 +11,7 @@ rules:
   - respond with exactly one top-level YAML mapping
   - include required fields: type, id, status, body
   - if unsure or blocked, use type=action_request with clarifying questions
-  - include next_action (continue|stop) to signal discussion flow
+  - include next_action (continue|stop) to signal exchange flow
 types:
   task_card: {body: title, context, requirements, acceptance_criteria, proposed_steps, risks, test_considerations}
   result_report: {body: summary, changes, tests, risks, checks}

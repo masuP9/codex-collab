@@ -5,7 +5,7 @@ Copy this file to `.claude/codex-collab.local.md` and customize for your project
 ---
 model: o4-mini
 sandbox: read-only
-discussion:
+exchange:
   max_iterations: 3
   user_confirm: on_important
   history_mode: summarize
