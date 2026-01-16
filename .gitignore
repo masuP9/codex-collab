@@ -1,0 +1,16 @@
+# Codex collaboration temporary files
+# These files are generated during Claude-Codex collaboration workflow
+# and should not be committed to the repository.
+
+# Planning output/prompt files
+.codex-plan-output.md
+.codex-plan-prompt.txt
+
+# Review output/prompt files
+.codex-review-output.md
+.codex-review-prompt.txt
+
+# Legacy/generic output files (for backward compatibility)
+.codex-output.md
+.codex-output.txt
+.codex-prompt.txt

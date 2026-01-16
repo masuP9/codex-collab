@@ -97,6 +97,8 @@ git add -A
 > **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method. Some tools may use `git ls-files` (which only shows tracked files) or respect `.gitignore`. Staging guarantees consistency.
 >
 > **Note:** This is staging only, not a commit. After review, you can optionally run `git reset` to unstage if needed.
+>
+> **Note:** Temporary files (`.codex-*.md`, `.codex-*.txt`) are excluded via `.gitignore` and won't be staged.
 
 2. Prepare review files:
 ```bash
@@ -161,9 +163,13 @@ sandbox: read-only
 Parse YAML frontmatter for:
 - `model`: Codex model to use
 - `sandbox`: read-only | workspace-write | danger-full-access
+- `exchange.enabled`: Enable planning exchange (default: true)
 - `exchange.max_iterations`: Maximum rounds for multi-turn exchange (default: 3)
 - `exchange.user_confirm`: When to ask user confirmation (never | always | on_important)
 - `exchange.history_mode`: How to handle history (full | summarize)
+- `review.enabled`: Enable review iteration (default: true)
+- `review.max_iterations`: Maximum rounds for review iteration (default: 5)
+- `review.user_confirm`: When to ask user confirmation for reviews (default: never)
 
 ### Settings Priority
 
@@ -178,9 +184,13 @@ Apply settings in this order (later overrides earlier):
 
 Always start with secure defaults:
 - `sandbox: read-only` - Codex cannot modify files
+- `exchange.enabled: true` - Planning exchange enabled by default
 - `exchange.max_iterations: 3` - Prevent runaway exchanges
 - `exchange.user_confirm: on_important` - Ask user for major decisions
 - `exchange.history_mode: summarize` - Efficient token usage
+- `review.enabled: true` - Review iteration enabled by default
+- `review.max_iterations: 5` - More iterations allowed (goal is clear, diff is small)
+- `review.user_confirm: never` - Auto-iterate without confirmation
 
 ## Quality Gates
 
@@ -265,7 +275,7 @@ xterm -e bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODE
 - Each `codex exec` call is stateless (no conversation history between calls)
 - Include all necessary context in each prompt
 - Use `-s read-only` for planning/review tasks (Codex won't modify files)
-- **Project directory**: Output files saved in project directory (not `/tmp`) to share between WSL sessions
+- **Project directory**: Output files saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are excluded via `.gitignore`
 - **Completion marker**: `=== CODEX_DONE ===` appended to output file for auto-detection
 - **Stdin input**: Use `cat file | codex exec -` format to avoid escaping issues
 
@@ -342,26 +352,44 @@ next_action: [continue, stop]
 
 ### Multi-turn Exchange
 
-The protocol supports iterative exchanges between Claude and Codex:
+The protocol supports two independent iteration modes:
+
+#### Planning Exchange (`exchange.*`)
+
+Iterative discussion during planning phase:
 
 **Flow Control:**
 - `next_action: continue` - Request further exchange
 - `next_action: stop` - Exchange complete
 - `type: action_request` - Implies `next_action: continue`
 
-**History Management:**
-- Keep latest 2 rounds in full
-- Summarize earlier rounds (key decisions, unresolved questions, constraints)
+**Settings:**
+- `exchange.enabled: true` - Global kill-switch
+- `exchange.max_iterations: 3` - Max rounds
+- `exchange.user_confirm: on_important` - User confirmation timing
+- `exchange.history_mode: summarize` - History management
 
 **Termination Conditions:**
 1. `next_action: stop` received
-2. `max_iterations` reached (default: 3)
+2. `exchange.max_iterations` reached
 3. Repeated same question detected
 
-**User Confirmation (`user_confirm` setting):**
-- `never`: Fully automatic exchange
-- `always`: Confirm each round
-- `on_important`: Confirm only for major decisions (default)
+#### Review Iteration (`review.*`)
+
+Auto-iterate on review findings:
+
+**Flow:**
+1. Codex reviews → CONDITIONAL/FAIL
+2. Claude fixes issues
+3. Re-request review
+4. Repeat until PASS or max reached
+
+**Settings:**
+- `review.enabled: true` - Enable auto-iteration
+- `review.max_iterations: 5` - Higher than exchange (goal is clear, diff is small)
+- `review.user_confirm: never` - Auto-iterate without confirmation
+
+**Note:** `exchange.*` and `review.*` are completely independent (no inheritance).
 
 ## References
 
