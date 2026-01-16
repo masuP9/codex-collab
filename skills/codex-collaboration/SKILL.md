@@ -61,7 +61,7 @@ EOF
 
 **WSL / Windows Terminal:**
 ```bash
-wt.exe -w 0 sp -d "$(pwd)" -V -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
 ```
 
 3. Auto-detect completion:
@@ -103,7 +103,7 @@ EOF
 
 2. Launch Codex and auto-detect completion:
 ```bash
-wt.exe -w 0 sp -d "$(pwd)" -V -p Ubuntu wsl.exe zsh -i -l -c "cat [REVIEW_PROMPT] | codex exec -s read-only - 2>&1 | tee [CODEX_REVIEW] && echo '=== CODEX_DONE ===' >> [CODEX_REVIEW]"
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [REVIEW_PROMPT] | codex exec -s read-only - 2>&1 | tee [CODEX_REVIEW] && echo '=== CODEX_DONE ===' >> [CODEX_REVIEW]"
 
 for i in {1..120}; do
   if grep -q "=== CODEX_DONE ===" "$CODEX_REVIEW" 2>/dev/null; then
@@ -206,7 +206,7 @@ Your prompt here
 EOF
 
 # Launch in new pane (use cat | codex exec - format)
-wt.exe -w 0 sp -d "$(pwd)" -V -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
 
 # Auto-detect completion (poll for marker)
 for i in {1..120}; do
@@ -216,12 +216,6 @@ for i in {1..120}; do
   fi
   sleep 1
 done
-```
-
-### WSL / Windows Terminal (Tab - Alternative)
-
-```bash
-wt.exe -w 0 nt wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
 ```
 
 ### Native Linux (gnome-terminal)
