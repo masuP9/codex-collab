@@ -13,8 +13,11 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 ## インストール
 
 ```bash
-# プラグインディレクトリにコピー済み
-# ~/.claude/plugins/codex-collab/
+# マーケットプレイスを追加
+/plugin marketplace add https://github.com/masuP9/codex-collab
+
+# プラグインをインストール
+/plugin install codex-collab@codex-collab
 ```
 
 ## 前提条件
