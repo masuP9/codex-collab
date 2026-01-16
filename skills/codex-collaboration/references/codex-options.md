@@ -217,7 +217,7 @@ Your prompt here
 EOF
 
 # Launch in new pane (use cat | codex exec - format)
-wt.exe -w 0 sp -d "$(pwd)" -V -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
 
 # Auto-detect completion (poll for marker)
 for i in {1..120}; do
@@ -230,19 +230,9 @@ done
 ```
 
 **Options:**
-- `-w 0` - Use current window
-- `sp` - Split pane
+- `-w -1` - 新しいウィンドウで開く（確実に別ウィンドウで起動）
 - `-d "$(pwd)"` - Current directory (WSL path)
-- `-V` - Vertical split (left-right, default)
-- `-H` - Horizontal split (top-bottom)
 - `-p <profile>` - Terminal profile (e.g., `Ubuntu`)
-- `nt` - New tab (alternative)
-
-### WSL / Windows Terminal (Tab - Alternative)
-
-```bash
-wt.exe -w 0 nt wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
-```
 
 ### Native Linux (gnome-terminal)
 
