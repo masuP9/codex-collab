@@ -37,6 +37,31 @@ Complete
 - More back-and-forth
 - Slower for simple tasks
 
+**Extension: Multi-turn Exchange**:
+The Review Type can be extended with iterative exchange. When Codex responds with `next_action: continue` or `type: action_request`, Claude enters an exchange loop:
+
+```
+User Request
+    ↓
+Claude: Analyze task, prepare context
+    ↓
+Codex: Create plan (or ask clarification)
+    ↓
+[If next_action: continue]
+    Claude: Respond to Codex
+    Codex: Refine plan (loop up to max_iterations)
+    ↓
+Claude: Validate plan, implement changes
+    ↓
+Codex: Review implementation
+    ↓
+[If next_action: continue]
+    Claude: Address review feedback
+    Codex: Re-review (loop up to max_iterations)
+    ↓
+Complete
+```
+
 ## Pattern 2: Consultation Type
 
 **Flow**: Claude implements → Codex advises on request
@@ -170,6 +195,7 @@ Start with default pattern. Switch if:
 | Pattern | Codex Calls | Context Size | Relative Cost |
 |---------|-------------|--------------|---------------|
 | Review | 2 (plan + review) | Medium | Base |
+| Review + Exchange | 2-N | Medium-Large | Base × iterations |
 | Consultation | 0-N | Small each | Lower |
 | Parallel | 1+ | Large | Higher |
 | Divide | Varies | Large | Highest |

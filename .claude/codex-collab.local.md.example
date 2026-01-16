@@ -1,0 +1,23 @@
+# Codex Collab Settings Example
+
+Copy this file to `.claude/codex-collab.local.md` and customize for your project.
+
+---
+model: o4-mini
+sandbox: read-only
+exchange:
+  max_iterations: 3
+  user_confirm: on_important
+  history_mode: summarize
+---
+
+## Project-specific Instructions
+
+Add any project-specific context here that should be included when collaborating with Codex.
+
+### Example Instructions
+
+- This project uses TypeScript with strict mode
+- Follow the existing code style in `src/`
+- All new files should include unit tests in `__tests__/`
+- Use functional components for React code
