@@ -285,16 +285,53 @@ If 120 seconds pass without detecting completion marker:
 2. Offer to extend wait time or read partial output
 3. Check output file manually: `cat "$CODEX_OUTPUT"`
 
-## Additional Resources
+## Structured Communication Protocol
 
-### Templates
+This plugin uses a minimal protocol header to enable structured communication between Claude Code and Codex CLI.
 
-Prompt templates for Codex communication:
-- **`templates/planning-prompt.md`** - Template for requesting plans
-- **`templates/review-prompt.md`** - Template for requesting reviews
+### Protocol Header
 
-### References
+Every prompt to Codex includes a ~15-line protocol header:
 
-Detailed documentation:
-- **`references/codex-options.md`** - Codex CLI configuration options
-- **`references/workflow-patterns.md`** - Alternative workflow patterns
+```yaml
+## Protocol (codex-collab/v1)
+format: yaml
+rules:
+  - respond with exactly one top-level YAML mapping
+  - include required fields: type, id, status, body
+  - if unsure or blocked, use type=action_request with clarifying questions
+types:
+  task_card: {body: title, context, requirements, acceptance_criteria, proposed_steps, risks, test_considerations}
+  result_report: {body: summary, changes, tests, risks, checks}
+  action_request: {body: question, options, expected_response}
+  review: {body: verdict, summary, findings, suggestions}
+status: [ok, partial, blocked]
+verdict: [pass, conditional, fail]
+severity: [low, medium, high]
+```
+
+### Message Types
+
+| Type | Purpose | Used By |
+|------|---------|---------|
+| `task_card` | Task definition with acceptance criteria | Codex (planning) |
+| `result_report` | Execution results with check status | Claude (reporting) |
+| `action_request` | Request for information or decision | Both |
+| `review` | Review verdict and findings | Codex (review) |
+
+### Parsing Strategy
+
+- **Lenient**: Require only top-level envelope and core keys
+- **Tolerant**: Accept extra fields and minor formatting differences
+- **Fallback**: If YAML parsing fails, fall back to unstructured parsing
+
+## References
+
+Detailed documentation in `references/`:
+
+- **`protocol-cheatsheet.yaml`** - Minimal protocol header for prompts
+- **`protocol-schema.yaml`** - Full protocol schema with examples
+- **`planning-prompt.md`** - Template for requesting plans
+- **`review-prompt.md`** - Template for requesting reviews
+- **`codex-options.md`** - Codex CLI configuration options
+- **`workflow-patterns.md`** - Alternative workflow patterns
