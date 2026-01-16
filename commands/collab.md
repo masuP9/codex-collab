@@ -127,6 +127,13 @@ Execute the plan step by step:
 
 Launch another Codex session for review:
 
+**0. Stage changes for Codex visibility (important!):**
+```bash
+git add -A
+```
+> **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method. Some tools use `git ls-files` (tracked files only) or respect `.gitignore`. Staging guarantees consistency.
+> This is staging only, not a commit. Run `git reset` after review to unstage if needed.
+
 **1. Prepare files:**
 ```bash
 CODEX_REVIEW="$(pwd)/.codex-review-output.md"
@@ -224,3 +231,4 @@ If timeout (120s) without completion marker:
 - Completion marker `=== CODEX_DONE ===` is appended to output file
 - Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)
 - Each Codex call is independent (no session state between calls)
+- **Important**: Stage changes with `git add -A` before review so Codex can see new files (ensures visibility regardless of file discovery method)

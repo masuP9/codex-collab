@@ -90,7 +90,15 @@ After receiving Codex's plan:
 
 After implementation:
 
-1. Prepare review files:
+1. **Stage changes for Codex visibility** (important!):
+```bash
+git add -A
+```
+> **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method. Some tools may use `git ls-files` (which only shows tracked files) or respect `.gitignore`. Staging guarantees consistency.
+>
+> **Note:** This is staging only, not a commit. After review, you can optionally run `git reset` to unstage if needed.
+
+2. Prepare review files:
 ```bash
 CODEX_REVIEW="$(pwd)/.codex-review-output.md"
 REVIEW_PROMPT="$(pwd)/.codex-review-prompt.txt"
@@ -101,7 +109,7 @@ cat > "$REVIEW_PROMPT" << 'EOF'
 EOF
 ```
 
-2. Launch Codex and auto-detect completion:
+3. Launch Codex and auto-detect completion:
 ```bash
 wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [REVIEW_PROMPT] | codex exec -s read-only - 2>&1 | tee [CODEX_REVIEW] && echo '=== CODEX_DONE ===' >> [CODEX_REVIEW]"
 
@@ -113,7 +121,7 @@ for i in {1..120}; do
 done
 ```
 
-3. Read and process review results
+4. Read and process review results
 
 The review prompt must request:
 - Design alignment check

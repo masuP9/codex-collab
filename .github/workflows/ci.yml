@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PyYAML
+        run: python -m pip install --upgrade pip pyyaml
+
+      - name: Lint JSON
+        run: |
+          python - <<'PY'
+          import json
+          import glob
+          import sys
+
+          files = glob.glob(".claude-plugin/*.json")
+          failed = False
+
+          for path in files:
+            try:
+              with open(path, "r", encoding="utf-8") as f:
+                json.load(f)
+            except Exception as e:
+              print(f"JSON lint failed: {path}: {e}")
+              failed = True
+
+          if failed:
+            sys.exit(1)
+
+          print(f"Checked {len(files)} JSON file(s).")
+          PY
+
+      - name: Lint YAML
+        run: |
+          python - <<'PY'
+          import glob
+          import sys
+          import yaml
+
+          files = glob.glob("skills/**/*.yaml", recursive=True)
+          failed = False
+
+          for path in files:
+            try:
+              with open(path, "r", encoding="utf-8") as f:
+                yaml.safe_load(f)
+            except Exception as e:
+              print(f"YAML lint failed: {path}: {e}")
+              failed = True
+
+          if failed:
+            sys.exit(1)
+
+          print(f"Checked {len(files)} YAML file(s).")
+          PY
