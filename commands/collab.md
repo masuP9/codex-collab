@@ -192,6 +192,8 @@ git add -A
 ```
 > **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method. Some tools use `git ls-files` (tracked files only) or respect `.gitignore`. Staging guarantees consistency.
 > This is staging only, not a commit. Run `git reset` after review to unstage if needed.
+>
+> **Note:** Temporary files (`.codex-*.md`, `.codex-*.txt`) are excluded via `.gitignore` and won't be staged.
 
 **1. Prepare files:**
 ```bash
@@ -314,7 +316,7 @@ If timeout (120s) without completion marker:
 
 - **WSL環境**: 新しいペインでCodexが起動し、リアルタイムで出力を確認可能。完了は自動検知。
 - **その他の環境**: 現在のターミナルで実行（完了まで出力は非表示）
-- Output files are saved in project directory (not `/tmp`) to share between WSL sessions
+- Output files are saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are excluded via `.gitignore`
 - Completion marker `=== CODEX_DONE ===` is appended to output file
 - Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)
 - Each Codex call is independent (no session state between calls)

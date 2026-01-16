@@ -138,7 +138,7 @@ codex exec \
   "Analyze this codebase structure"
 ```
 
-**Note**: Use project directory (`.codex-output.txt`) instead of `/tmp` to share between WSL sessions.
+**Note**: Use project directory (`.codex-output.txt`) instead of `/tmp` to share between WSL sessions. These temporary files are excluded via `.gitignore` (see project root).
 
 ## Important Notes
 
