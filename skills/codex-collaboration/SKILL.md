@@ -93,12 +93,13 @@ After implementation:
 1. **Stage changes for Codex visibility** (important!):
 ```bash
 git add -A
+git reset -- .codex-*.md .codex-*.txt 2>/dev/null || true
 ```
 > **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method. Some tools may use `git ls-files` (which only shows tracked files) or respect `.gitignore`. Staging guarantees consistency.
 >
 > **Note:** This is staging only, not a commit. After review, you can optionally run `git reset` to unstage if needed.
 >
-> **Note:** Temporary files (`.codex-*.md`, `.codex-*.txt`) are excluded via `.gitignore` and won't be staged.
+> **Note:** The `git reset` line explicitly unstages temporary files (`.codex-*.md`, `.codex-*.txt`) to ensure they are not included in the review, even if the user's project doesn't have a `.gitignore` for these files.
 
 2. Prepare review files:
 ```bash
@@ -275,7 +276,7 @@ xterm -e bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODE
 - Each `codex exec` call is stateless (no conversation history between calls)
 - Include all necessary context in each prompt
 - Use `-s read-only` for planning/review tasks (Codex won't modify files)
-- **Project directory**: Output files saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are excluded via `.gitignore`
+- **Project directory**: Output files saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are explicitly unstaged after `git add -A` to ensure they don't appear in review diffs
 - **Completion marker**: `=== CODEX_DONE ===` appended to output file for auto-detection
 - **Stdin input**: Use `cat file | codex exec -` format to avoid escaping issues
 

@@ -189,11 +189,12 @@ Launch another Codex session for review:
 **0. Stage changes for Codex visibility (important!):**
 ```bash
 git add -A
+git reset -- .codex-*.md .codex-*.txt 2>/dev/null || true
 ```
 > **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method. Some tools use `git ls-files` (tracked files only) or respect `.gitignore`. Staging guarantees consistency.
 > This is staging only, not a commit. Run `git reset` after review to unstage if needed.
 >
-> **Note:** Temporary files (`.codex-*.md`, `.codex-*.txt`) are excluded via `.gitignore` and won't be staged.
+> **Note:** The `git reset` line explicitly unstages temporary files (`.codex-*.md`, `.codex-*.txt`) to ensure they are not included in the review, even if the user's project doesn't have a `.gitignore` for these files.
 
 **1. Prepare files:**
 ```bash
@@ -273,7 +274,7 @@ Report completion to user with summary
    - `on_important`: Confirm only for high-severity findings
 
 5. **Re-request review:**
-   - Stage changes with `git add -A`
+   - Stage changes with `git add -A && git reset -- .codex-*.md .codex-*.txt 2>/dev/null || true`
    - Launch Codex with updated diff
    - Return to Step 8
 
@@ -316,7 +317,7 @@ If timeout (120s) without completion marker:
 
 - **WSL環境**: 新しいペインでCodexが起動し、リアルタイムで出力を確認可能。完了は自動検知。
 - **その他の環境**: 現在のターミナルで実行（完了まで出力は非表示）
-- Output files are saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are excluded via `.gitignore`
+- Output files are saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are explicitly unstaged after `git add -A` to ensure they don't appear in review diffs
 - Completion marker `=== CODEX_DONE ===` is appended to output file
 - Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)
 - Each Codex call is independent (no session state between calls)
