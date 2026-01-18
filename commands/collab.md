@@ -103,6 +103,22 @@ Potential issues and edge cases
 ### 4. Test Considerations
 What should be tested
 
+## Response Format
+
+At the end of your response, include a metadata block:
+
+```
+---
+status: continue or stop
+open_questions:  # if any clarification needed
+  - question 1
+decisions:  # key decisions made
+  - decision 1
+---
+```
+
+Use `status: continue` if you have questions, `status: stop` if the plan is complete.
+
 Provide your plan now.
 EOF
 ```
@@ -273,37 +289,48 @@ else
 fi
 ```
 
-**2. Generate unique marker and send prompt:**
+**2. Send prompt using file-based method (recommended for long prompts):**
 ```bash
 # Source helpers (if not already)
 HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 [ -f "$HELPERS" ] && source "$HELPERS"
 
-# The prompt content (same as prepared in Step 3.1)
-PROMPT_CONTENT=$(cat "$CODEX_PROMPT")
+# CODEX_PROMPT file was prepared in Step 3.1
 
-# Use helper or inline fallback for sending prompt
-if type codex_send_prompt &>/dev/null; then
-  END_MARKER=$(codex_send_prompt "$ATTACHED_PANE" "$PROMPT_CONTENT")
+# Use file-based prompt sending (avoids paste-buffer issues with long prompts)
+if type codex_send_prompt_file &>/dev/null; then
+  END_MARKER=$(codex_send_prompt_file "$ATTACHED_PANE" "$CODEX_PROMPT")
   echo "Prompt sent to attached Codex pane: $ATTACHED_PANE"
   echo "Completion marker: $END_MARKER"
 else
-  # Inline fallback
+  # Inline fallback: Send short reference prompt instead of full content
   MARKER_ID="$(date +%s)-$RANDOM"
   END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
-  TEMP_PROMPT="$TMP_DIR/codex-prompt-$$"
-  echo "${PROMPT_CONTENT}
 
-When finished, output exactly: ${END_MARKER}" > "$TEMP_PROMPT"
+  # Clear any existing input first
+  tmux send-keys -t "$ATTACHED_PANE" C-u
+  sleep 0.1
+
+  # Create short reference prompt
+  TEMP_PROMPT="$TMP_DIR/codex-prompt-$$"
+  cat > "$TEMP_PROMPT" << EOF
+Please read the instructions in ${CODEX_PROMPT} and follow them.
+
+---
+IMPORTANT: After completing your response, output this exact marker on its own line:
+${END_MARKER}
+EOF
   tmux load-buffer "$TEMP_PROMPT"
   tmux paste-buffer -t "$ATTACHED_PANE"
-  sleep 0.2
+  sleep 0.5
   tmux send-keys -t "$ATTACHED_PANE" Enter
   rm -f "$TEMP_PROMPT"
   echo "Prompt sent to attached Codex pane: $ATTACHED_PANE"
   echo "Completion marker: $END_MARKER"
 fi
 ```
+
+> **Note:** File-based prompt sending references the instruction file by path instead of pasting the full content. This avoids paste-buffer corruption issues with long prompts.
 
 **3. Wait for completion (marker + idle detection):**
 ```bash
@@ -533,6 +560,20 @@ Any vulnerabilities?
 - PASS: No critical issues
 - CONDITIONAL: Acceptable with improvements
 - FAIL: Critical issues found
+
+## Response Format
+
+At the end of your response, include a metadata block:
+
+```
+---
+status: stop
+verdict: pass / conditional / fail
+findings:  # if any issues found
+  - severity: low / medium / high
+    message: description of issue
+---
+```
 
 Provide your review now.
 EOF

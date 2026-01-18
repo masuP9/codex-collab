@@ -227,6 +227,7 @@ codex_find_pane() {
 # Send prompt to Codex pane using paste-buffer (reliable multi-line)
 # Usage: codex_send_prompt "$PANE_ID" "$PROMPT_CONTENT"
 # Returns: 0 on success, 1 on failure
+# Note: For long prompts (>1000 chars), use codex_send_prompt_file instead
 codex_send_prompt() {
   local pane_id="$1"
   local prompt_content="$2"
@@ -236,6 +237,9 @@ codex_send_prompt() {
     echo "Error: pane_id and prompt_content required" >&2
     return 1
   fi
+
+  # Clear any existing input in the pane first
+  codex_clear_input "$pane_id" 2>/dev/null || true
 
   local end_marker="<<RESPONSE_END_${marker_id}>>"
 
@@ -301,6 +305,9 @@ codex_send_prompt_file() {
     echo "Error: instruction_file required" >&2
     return 1
   fi
+
+  # Clear any existing input in the pane first
+  codex_clear_input "$pane_id" 2>/dev/null || true
 
   local end_marker="<<RESPONSE_END_${marker_id}>>"
 
@@ -659,6 +666,25 @@ codex_send_to_codex() {
   local message="$2"
 
   codex_send_to_pane "$codex_pane" "$message"
+}
+
+# Clear the input line in a pane (useful before sending new prompts)
+# Usage: codex_clear_input "pane_id"
+# Sends Ctrl+U to clear the current input line
+codex_clear_input() {
+  local pane_id="$1"
+  local tmux_cmd
+  tmux_cmd=$(codex_tmux_cmd)
+
+  if [ -z "$pane_id" ]; then
+    echo "Error: pane_id required" >&2
+    return 1
+  fi
+
+  # Send Ctrl+U to clear the input line
+  $tmux_cmd send-keys -t "$pane_id" C-u
+  sleep 0.1
+  return 0
 }
 
 # ==============================================================================
@@ -1101,4 +1127,186 @@ codex_collab_session_kill() {
 
   # Clean up pane ID files
   rm -f "$(codex_tmp_path claude-pane-id)" "$(codex_tmp_path codex-pane-id)"
+}
+
+# ==============================================================================
+# Lightweight Metadata Extraction
+# ==============================================================================
+#
+# Functions to extract metadata from Codex responses.
+# Metadata is expected in a YAML block at the end of the response:
+#
+#   ---
+#   status: continue
+#   verdict: pass
+#   open_questions:
+#     - question 1
+#   ---
+#
+
+# Extract the metadata block from a response
+# Usage: metadata=$(codex_extract_metadata "$response")
+# Returns: The YAML content between --- markers (without the markers)
+codex_extract_metadata() {
+  local response="$1"
+
+  # Extract the last --- ... --- block
+  # Use awk to find and print the last complete block
+  echo "$response" | awk '
+    /^---$/ {
+      if (in_block) {
+        # End of block - save it
+        last_block = block
+        in_block = 0
+        block = ""
+      } else {
+        # Start of block
+        in_block = 1
+        block = ""
+      }
+      next
+    }
+    in_block {
+      if (block != "") {
+        block = block "\n" $0
+      } else {
+        block = $0
+      }
+    }
+    END {
+      if (last_block != "") {
+        print last_block
+      }
+    }
+  '
+}
+
+# Get a simple field value from metadata
+# Usage: value=$(codex_get_field "$metadata" "status")
+codex_get_field() {
+  local metadata="$1"
+  local field="$2"
+
+  echo "$metadata" | grep "^${field}:" | sed "s/^${field}: *//" | head -1
+}
+
+# Get the status field (continue/stop)
+# Usage: result=$(codex_get_status "$metadata")
+# Returns: "continue" or "stop" (default: "stop")
+codex_get_status() {
+  local metadata="$1"
+  local status_val
+  status_val=$(codex_get_field "$metadata" "status")
+
+  case "$status_val" in
+    continue|stop)
+      echo "$status_val"
+      ;;
+    *)
+      echo "stop"  # Default to stop if not specified
+      ;;
+  esac
+}
+
+# Get the verdict field (pass/conditional/fail)
+# Usage: verdict=$(codex_get_verdict "$metadata")
+# Returns: "pass", "conditional", "fail", or empty
+codex_get_verdict() {
+  local metadata="$1"
+  local verdict
+  verdict=$(codex_get_field "$metadata" "verdict")
+
+  case "$verdict" in
+    pass|conditional|fail)
+      echo "$verdict"
+      ;;
+    *)
+      echo ""  # No verdict
+      ;;
+  esac
+}
+
+# Get a list field from metadata (simple single-line items only)
+# Usage: codex_get_list "$metadata" "open_questions"
+# Returns: One item per line
+codex_get_list() {
+  local metadata="$1"
+  local field="$2"
+
+  echo "$metadata" | awk -v field="$field" '
+    $0 ~ "^" field ":" {
+      in_list = 1
+      next
+    }
+    in_list && /^  - / {
+      sub(/^  - /, "")
+      print
+    }
+    in_list && /^[a-z_]+:/ {
+      # New field starts, end list
+      in_list = 0
+    }
+  '
+}
+
+# Fallback: Try to extract verdict from natural language response
+# Usage: verdict=$(codex_extract_verdict_fallback "$response")
+# Looks for PASS, FAIL, CONDITIONAL in the response
+codex_extract_verdict_fallback() {
+  local response="$1"
+
+  # Look for explicit verdict markers (case-insensitive)
+  if echo "$response" | grep -qiE '\bPASS\b'; then
+    echo "pass"
+  elif echo "$response" | grep -qiE '\bFAIL\b'; then
+    echo "fail"
+  elif echo "$response" | grep -qiE '\bCONDITIONAL\b'; then
+    echo "conditional"
+  else
+    echo ""
+  fi
+}
+
+# Parse response and extract both body and metadata
+# Usage: codex_parse_response "$response"
+# Outputs: Sets global variables CODEX_RESPONSE_BODY, CODEX_RESPONSE_META
+codex_parse_response() {
+  local response="$1"
+
+  # Extract metadata
+  CODEX_RESPONSE_META=$(codex_extract_metadata "$response")
+
+  # Extract body (everything before the last metadata block)
+  # Remove the last --- ... --- block
+  CODEX_RESPONSE_BODY=$(echo "$response" | awk '
+    {
+      lines[NR] = $0
+    }
+    /^---$/ {
+      if (in_block) {
+        end_line = NR
+        in_block = 0
+      } else {
+        start_line = NR
+        in_block = 1
+      }
+    }
+    END {
+      # Print everything except the last metadata block
+      if (start_line && end_line && end_line > start_line) {
+        for (i = 1; i < start_line; i++) {
+          print lines[i]
+        }
+      } else {
+        # No valid metadata block found, print everything
+        for (i = 1; i <= NR; i++) {
+          print lines[i]
+        }
+      }
+    }
+  ')
+
+  # Export for use by caller
+  export CODEX_RESPONSE_BODY
+  export CODEX_RESPONSE_META
 }
