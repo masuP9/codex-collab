@@ -157,7 +157,58 @@ echo "$CODEX_PANE" > "$PANE_ID_FILE"
 echo "Pane ID saved to $PANE_ID_FILE"
 ```
 
-### Step 3: Capture Current State (with hash for change detection)
+### Step 3: Check Session State (for context optimization)
+
+Determine if this is the first prompt in a session or a continuation:
+
+```bash
+SESSION_STATE_FILE="$(pwd)/.codex-session-state"
+SESSION_TIMEOUT=1800  # 30 minutes in seconds (configurable via settings)
+IS_NEW_SESSION=false
+TURN_COUNT=1  # Start at 1 for new sessions
+
+# Check if jq is available (required for JSON parsing)
+if ! command -v jq &>/dev/null; then
+  echo "Warning: jq not found. Session state tracking disabled."
+  IS_NEW_SESSION=true
+else
+  if [ -f "$SESSION_STATE_FILE" ]; then
+    # Read existing session state
+    LAST_PROMPT_TS=$(jq -r '.last_prompt_ts // 0' "$SESSION_STATE_FILE" 2>/dev/null || echo 0)
+    TURN_COUNT=$(jq -r '.turn_count // 1' "$SESSION_STATE_FILE" 2>/dev/null || echo 1)
+    STORED_PANE=$(jq -r '.pane_id // ""' "$SESSION_STATE_FILE" 2>/dev/null || echo "")
+
+    CURRENT_TS=$(date +%s)
+    TIME_DIFF=$((CURRENT_TS - LAST_PROMPT_TS))
+
+    # Check if session is stale or pane changed
+    if [ "$TIME_DIFF" -gt "$SESSION_TIMEOUT" ] || [ "$STORED_PANE" != "$CODEX_PANE" ]; then
+      IS_NEW_SESSION=true
+      TURN_COUNT=1
+      echo "Session reset (timeout: ${TIME_DIFF}s > ${SESSION_TIMEOUT}s or pane changed)"
+    else
+      TURN_COUNT=$((TURN_COUNT + 1))
+      echo "Continuing session (turn: $TURN_COUNT, last prompt: ${TIME_DIFF}s ago)"
+    fi
+  else
+    IS_NEW_SESSION=true
+    echo "New session (no state file)"
+  fi
+
+  # Update session state
+  cat > "$SESSION_STATE_FILE" << EOF
+{
+  "last_prompt_ts": $(date +%s),
+  "turn_count": $TURN_COUNT,
+  "pane_id": "$CODEX_PANE"
+}
+EOF
+fi
+```
+
+> **Note:** Session state tracking requires `jq`. If not installed, sessions are treated as new each time.
+
+### Step 3a: Capture Current State (with hash for change detection)
 
 Before sending the prompt, capture the current state:
 
@@ -173,7 +224,7 @@ echo "Current state hash: $BEFORE_HASH"
 
 ### Step 4: Send Prompt to Codex Pane
 
-Generate a unique marker and send the prompt:
+Generate a unique marker and send the prompt. Use different templates for new vs continuing sessions:
 
 ```bash
 PROMPT_FILE="$(pwd)/.codex-attach-prompt.txt"
@@ -182,10 +233,33 @@ PROMPT_FILE="$(pwd)/.codex-attach-prompt.txt"
 MARKER_ID="$(date +%s)-$RANDOM"
 END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
 
-# Write prompt to file (marker is NOT included in the prompt text)
-cat > "$PROMPT_FILE" << 'PROMPT_EOF'
-[User's prompt from $ARGUMENTS]
+# Build prompt based on session state
+USER_PROMPT="$ARGUMENTS"
+
+if [ "$IS_NEW_SESSION" = true ]; then
+  # New session: include full context header
+  cat > "$PROMPT_FILE" << PROMPT_EOF
+## Context (New Session)
+
+You are collaborating with Claude Code. This is the start of a new collaboration session.
+
+- Working directory: $(pwd)
+- Session turn: 1
+
+## Request
+
+$USER_PROMPT
 PROMPT_EOF
+  echo "Using full context template (new session)"
+else
+  # Continuing session: use lightweight update format
+  cat > "$PROMPT_FILE" << PROMPT_EOF
+## Update (Turn $TURN_COUNT)
+
+$USER_PROMPT
+PROMPT_EOF
+  echo "Using lightweight template (continuing session, turn $TURN_COUNT)"
+fi
 
 # Also write instruction for end marker (separate from prompt)
 MARKER_INSTRUCTION="
@@ -204,6 +278,8 @@ echo "${PROMPT_CONTENT}${MARKER_INSTRUCTION}" > "$TEMP_PROMPT"
 # Note: 'Enter' is sent separately after paste for Codex interactive mode compatibility
 tmux load-buffer "$TEMP_PROMPT"
 tmux paste-buffer -t "$CODEX_PANE"
+# Small delay to ensure paste completes before sending Enter
+sleep 0.1
 tmux send-keys -t "$CODEX_PANE" Enter
 rm -f "$TEMP_PROMPT"
 

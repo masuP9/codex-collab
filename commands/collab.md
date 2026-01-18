@@ -275,6 +275,8 @@ echo "${PROMPT_CONTENT}${MARKER_INSTRUCTION}" > "$TEMP_PROMPT"
 # This avoids issues with special characters and long prompts in send-keys
 tmux load-buffer "$TEMP_PROMPT"
 tmux paste-buffer -t "$ATTACHED_PANE"
+# Small delay to ensure paste completes before sending Enter
+sleep 0.1
 tmux send-keys -t "$ATTACHED_PANE" Enter
 rm -f "$TEMP_PROMPT"
 
