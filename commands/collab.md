@@ -9,7 +9,7 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 Execute a collaborative workflow between Claude Code and Codex CLI.
 
 **Launch modes** (`launch.mode` setting):
-- **tmux**: tmuxセッション内の場合、新しいウィンドウで実行。フォーカスを奪わない。`Ctrl+b w`でウィンドウ一覧から確認可能。
+- **tmux**: 現在のペインを水平分割し、右側でCodexを実行。フォーカスを奪わない。
 - **wt**: Windows Terminalの新しいペインで実行。フォーカスを奪う可能性あり。
 - **inline**: 現在のターミナルで実行（完了までブロック）。
 - **auto** (default): tmuxセッション内 → tmux、それ以外 → wt → inline。
@@ -99,7 +99,7 @@ Apply launch mode based on `launch.mode` setting:
 - **wt**: Force Windows Terminal mode (error if wt.exe not available)
 - **inline**: Force inline mode (blocks terminal until completion)
 
-> **Note:** tmux mode only works when already inside a tmux session (`$TMUX` is set). This allows Codex to run in a new window within the same session, visible via `Ctrl+b w` (window list). Outside tmux, wt.exe provides real-time output visibility.
+> **Note:** tmux mode only works when already inside a tmux session (`$TMUX` is set). This splits the current pane horizontally and runs Codex on the right side. Outside tmux, wt.exe provides real-time output visibility.
 
 ```bash
 # Read settings from .claude/codex-collab.local.md (YAML frontmatter)
@@ -141,45 +141,65 @@ echo "Using launch mode: $LAUNCH_MODE"
 
 **3. Launch Codex:**
 
-**tmux mode** (recommended - no focus stealing):
+**tmux mode** (recommended - no focus stealing, uses `tmux wait-for` for instant completion detection):
 ```bash
-# Use current tmux session (get session name from $TMUX)
-SESSION="$(tmux display-message -p '#S')"
-WINDOW="codex-plan-$(date +%s)"
+# Run Codex in a new pane (split horizontally) with signal-based completion
 PROMPT="$CODEX_PROMPT"
 OUTPUT="$CODEX_OUTPUT"
 SANDBOX="${SANDBOX_SETTING:-read-only}"
+# Unique signal: PID + timestamp + random suffix to avoid collisions
+SIGNAL="codex-plan-$$-$(date +%s)-$RANDOM"
 
-# Run Codex in a new window within the current session (detached)
-tmux new-window -d -t "$SESSION" -n "$WINDOW" \
-  "cd \"$(pwd)\"; cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\" && echo '=== CODEX_DONE ===' >> \"$OUTPUT\""
+# Split current window horizontally and run Codex in the new pane
+# Signal is sent even on failure (finally-style)
+tmux split-window -h -d \
+  "cd \"$(pwd)\"; \
+   cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\"; \
+   echo '=== CODEX_DONE ===' >> \"$OUTPUT\"; \
+   tmux wait-for -S \"$SIGNAL\""
 
-echo "Codex running in current tmux session '$SESSION' window '$WINDOW'"
-echo "To view: Ctrl+b w (window list) or Ctrl+b n/p (next/prev window)"
+echo "Codex running in a new pane (right side)"
+echo "Signal: $SIGNAL"
 ```
 
 **wt mode** (Windows Terminal - may steal focus):
 ```bash
 SANDBOX="${SANDBOX_SETTING:-read-only}"
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat \"$CODEX_PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$CODEX_OUTPUT\" && echo '=== CODEX_DONE ===' >> \"$CODEX_OUTPUT\""
+# Note: using ; instead of && so marker is written even on Codex failure
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat \"$CODEX_PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$CODEX_OUTPUT\"; echo '=== CODEX_DONE ===' >> \"$CODEX_OUTPUT\""
 ```
 
 **inline mode** (fallback - blocks terminal):
 ```bash
 SANDBOX="${SANDBOX_SETTING:-read-only}"
-cat "$CODEX_PROMPT" | codex exec -s "$SANDBOX" - 2>&1 | tee "$CODEX_OUTPUT" && echo '=== CODEX_DONE ===' >> "$CODEX_OUTPUT"
+# Note: using ; instead of && so marker is written even on Codex failure
+cat "$CODEX_PROMPT" | codex exec -s "$SANDBOX" - 2>&1 | tee "$CODEX_OUTPUT"; echo '=== CODEX_DONE ===' >> "$CODEX_OUTPUT"
 ```
 
 **Options to include based on settings:**
 - `-m, --model <model>` - Specify model (e.g., o4-mini, o3) from `model` setting
 - `-s, --sandbox <mode>` - read-only | workspace-write | danger-full-access from `sandbox` setting
 
-### Step 4: Wait for Codex Completion (Auto-detect)
+### Step 4: Wait for Codex Completion
 
-Poll the output file for the completion marker.
+Wait for Codex to complete. Method depends on launch mode:
 
 > **Important:** Set the Bash tool's `timeout` parameter to `min(wait_timeout + 60, 600) * 1000` milliseconds. Example: for 180s wait, use `timeout: 240000`. Max: 600000ms (10 minutes).
 
+**tmux mode** (signal-based, instant detection):
+```bash
+# WAIT_TIMEOUT from settings (default: 180 seconds)
+# SIGNAL from Step 3
+# Note: Requires GNU coreutils `timeout` command. On macOS, install with `brew install coreutils` (provides `gtimeout`).
+echo "Waiting for Codex..."
+if timeout "${WAIT_TIMEOUT}s" tmux wait-for "$SIGNAL"; then
+  echo "Codex completed"
+else
+  echo "Timeout after ${WAIT_TIMEOUT}s - check tmux pane or output file"
+fi
+```
+
+**wt/inline mode** (file polling):
 ```bash
 # WAIT_TIMEOUT from settings (default: 180 seconds)
 echo "Waiting for Codex..."
@@ -199,10 +219,10 @@ if [ "$COMPLETED" = false ]; then
 fi
 ```
 
-**If timeout occurs (`COMPLETED=false`):**
-1. Check if Codex is still running in the other pane
-2. If still running → Re-run wait loop with extended timeout
-3. If completed but marker missing → Read partial output and report error
+**If timeout occurs:**
+1. Check if Codex is still running in the tmux pane or other terminal
+2. If still running → Re-run wait with extended timeout
+3. If completed but signal/marker missing → Read partial output and report error
 4. If failed → Report error and offer to retry
 
 ### Step 5: Read and Process Response
@@ -331,28 +351,45 @@ EOF
 
 Use the same launch mode as Step 3. For tmux mode:
 ```bash
-# Use current tmux session
-SESSION="$(tmux display-message -p '#S')"
-WINDOW="codex-review-$(date +%s)"
+# Run Codex review in a new pane with signal-based completion
 PROMPT="$REVIEW_PROMPT"
 OUTPUT="$CODEX_REVIEW"
 SANDBOX="${SANDBOX_SETTING:-read-only}"
+# Unique signal: PID + timestamp + random suffix to avoid collisions
+SIGNAL="codex-review-$$-$(date +%s)-$RANDOM"
 
-tmux new-window -d -t "$SESSION" -n "$WINDOW" \
-  "cd \"$(pwd)\"; cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\" && echo '=== CODEX_DONE ===' >> \"$OUTPUT\""
+tmux split-window -h -d \
+  "cd \"$(pwd)\"; \
+   cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\"; \
+   echo '=== CODEX_DONE ===' >> \"$OUTPUT\"; \
+   tmux wait-for -S \"$SIGNAL\""
 
-echo "Codex review running in current tmux session '$SESSION' window '$WINDOW'"
+echo "Codex review running in a new pane (right side)"
+echo "Signal: $SIGNAL"
 ```
 
 For wt mode:
 ```bash
 SANDBOX="${SANDBOX_SETTING:-read-only}"
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat \"$REVIEW_PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$CODEX_REVIEW\" && echo '=== CODEX_DONE ===' >> \"$CODEX_REVIEW\""
+# Note: using ; instead of && so marker is written even on Codex failure
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat \"$REVIEW_PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$CODEX_REVIEW\"; echo '=== CODEX_DONE ===' >> \"$CODEX_REVIEW\""
 ```
 
 > **Important:** Set Bash tool's `timeout` parameter to match or exceed `codex.wait_timeout` (in milliseconds).
 
 **3. Wait for completion:**
+
+For tmux mode (signal-based):
+```bash
+# SIGNAL from step 2
+if timeout "${WAIT_TIMEOUT}s" tmux wait-for "$SIGNAL"; then
+  echo "Codex review completed"
+else
+  echo "Timeout - check tmux pane or output file"
+fi
+```
+
+For wt/inline mode (file polling):
 ```bash
 # Auto-detect completion (WAIT_TIMEOUT from settings, default: 180)
 for i in $(seq 1 $WAIT_TIMEOUT); do
@@ -445,12 +482,15 @@ If timeout (`codex.wait_timeout`, default 180s) without completion marker:
 ## Notes
 
 - **Launch modes**:
-  - **tmux**: Only works when inside a tmux session (`$TMUX` set). Runs in a new window within the same session. No focus stealing. Use `Ctrl+b w` to switch windows.
-  - **wt**: Windows Terminal new pane. May steal focus (GitHub issue #17460).
+  - **tmux**: Only works when inside a tmux session (`$TMUX` set). Splits current pane horizontally and runs Codex on the right. No focus stealing. Uses `tmux wait-for` for instant completion detection.
+  - **wt**: Windows Terminal new pane. May steal focus (GitHub issue #17460). Uses file polling for completion detection.
   - **inline**: Runs in current terminal. Blocks until completion.
   - **auto** (default): If inside tmux session → tmux, else → wt → inline.
+- **Completion detection**:
+  - **tmux mode**: Uses `tmux wait-for` signal for instant detection (no polling). The `timeout` command wraps it for timeout support.
+  - **wt/inline mode**: Polls output file for `=== CODEX_DONE ===` marker every 1 second.
 - Output files are saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are explicitly unstaged after `git add -A` to ensure they don't appear in review diffs
-- Completion marker `=== CODEX_DONE ===` is appended to output file
+- Completion marker `=== CODEX_DONE ===` is appended to output file (kept for compatibility and debugging)
 - Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)
 - Each Codex call is independent (no session state between calls)
 - **Important**: Stage changes with `git add -A` before review so Codex can see new files (ensures visibility regardless of file discovery method)

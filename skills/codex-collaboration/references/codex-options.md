@@ -217,7 +217,7 @@ Your prompt here
 EOF
 
 # Launch in new pane (use cat | codex exec - format)
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] ; echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
 
 # Auto-detect completion (poll for marker)
 for i in {1..120}; do
@@ -241,7 +241,7 @@ CODEX_OUTPUT="$(pwd)/.codex-output.md"
 CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
 rm -f "$CODEX_OUTPUT"
 
-gnome-terminal -- bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT && echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
+gnome-terminal -- bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT ; echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
 ```
 
 ### Native Linux (xterm)
@@ -251,7 +251,7 @@ CODEX_OUTPUT="$(pwd)/.codex-output.md"
 CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
 rm -f "$CODEX_OUTPUT"
 
-xterm -e bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT && echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
+xterm -e bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT ; echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
 ```
 
 ### macOS (Terminal.app)
@@ -261,7 +261,7 @@ CODEX_OUTPUT="$(pwd)/.codex-output.md"
 CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
 rm -f "$CODEX_OUTPUT"
 
-osascript -e "tell app \"Terminal\" to do script \"cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT && echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT\""
+osascript -e "tell app \"Terminal\" to do script \"cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT ; echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT\""
 ```
 
 ### Key Points

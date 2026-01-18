@@ -14,7 +14,7 @@ codex:
 launch:
   mode: auto               # auto | wt | tmux | inline
                            # auto: tmuxセッション内→tmux, それ以外→wt→inline
-                           # tmux: 現在のtmuxセッション内に新しいウィンドウを作成
+                           # tmux: 現在のペインを水平分割し右側で実行
                            # inline: 現在のターミナルで実行（ブロッキング）
 
 # Planning exchange settings (Codex plans → Claude questions → Codex refines)
