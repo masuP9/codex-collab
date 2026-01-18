@@ -12,7 +12,7 @@ Codex の出力をリアルタイムで確認したい場合の設定方法。
 ### Step 1: 出力ファイルを準備
 
 ```bash
-CODEX_OUTPUT="/tmp/codex-collab-$(date +%s).txt"
+CODEX_OUTPUT="./tmp/codex-collab-$(date +%s).txt"
 touch "$CODEX_OUTPUT"
 ```
 
@@ -51,7 +51,7 @@ tmux kill-pane -t {last}
 
 ```bash
 # 変数設定
-CODEX_OUTPUT="/tmp/codex-collab-$(date +%s).txt"
+CODEX_OUTPUT="./tmp/codex-collab-$(date +%s).txt"
 touch "$CODEX_OUTPUT"
 
 # 監視ペインを起動

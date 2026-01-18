@@ -28,6 +28,53 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 - オプション: tmuxセッション内で作業している場合、フォーカスを奪わずにCodexを実行可能
 - オプション: `jq` (セッション状態管理に使用。未インストールの場合は毎回新規セッションとして扱う)
 
+## プロジェクト構造
+
+```
+codex-collab/
+├── .claude-plugin/
+│   └── plugin.json        # プラグインメタデータ
+├── commands/
+│   ├── collab.md          # /collab コマンド
+│   └── collab-attach.md   # /collab-attach コマンド
+├── scripts/
+│   └── codex-helpers.sh   # 共通ヘルパー関数
+└── skills/
+    └── codex-collaboration/
+        └── references/     # プロトコル定義
+```
+
+### ヘルパースクリプト
+
+`scripts/codex-helpers.sh` には、コマンド間で共有される関数が定義されています:
+
+**基本関数:**
+- `codex_hash_content()` - クロスプラットフォームハッシュ計算
+- `codex_find_pane()` - Codexペイン検出（保存ID + 自動検出）
+- `codex_verify_pane()` - ペインの有効性検証
+- `codex_send_prompt()` - tmux paste-bufferでのプロンプト送信
+- `codex_wait_completion()` - マーカー + アイドル検出による完了待機
+- `codex_capture_output()` - ペイン出力のキャプチャ
+- `codex_check_tmux()` - tmuxセッション確認
+
+**双方向通信（バッファ + シグナル）:**
+- `codex_set_buffer()` / `codex_get_buffer()` - tmuxバッファでデータ共有
+- `codex_send_signal()` / `codex_wait_signal()` - イベントドリブン完了通知
+- `codex_wait_response()` / `codex_respond()` - 統合パターン
+
+**自動承認（セキュア）:**
+- `codex_get_pending_command()` - アクティブな承認ダイアログを検出
+- `codex_approve_if_matches()` - パターンマッチで承認
+- `codex_approve_response_commands()` - set-buffer + wait-for を自動承認
+
+**セッション管理:**
+- `codex_collab_session_start()` - collabセッションを作成/アタッチ
+- `codex_collab_session_exists()` - セッション存在確認
+- `codex_collab_session_info()` - セッション情報表示
+- `codex_collab_session_kill()` - セッション終了
+
+各コマンドは自動的にヘルパーをsourceし、利用できない場合はインラインのフォールバック実装を使用します。
+
 ## 使い方
 
 ### `/collab` コマンド
@@ -39,8 +86,8 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 ```
 
 **自動検出機能 (tmuxモード):**
-- tmuxセッション内で実行時、`.codex-pane-id`がなくても既存のCodexペインを自動検出
-- 検出されたペインは`.codex-pane-id`に保存され、attached modeで使用
+- tmuxセッション内で実行時、`tmp/codex-pane-id`がなくても既存のCodexペインを自動検出
+- 検出されたペインは`tmp/codex-pane-id`に保存され、attached modeで使用
 - 複数のCodexペインがある場合は最初のペインを使用（警告を表示）
 - Codexペインが見つからない場合は従来通り新規`codex exec`を起動
 
@@ -68,9 +115,38 @@ tmux split-window -h 'codex'
 **特徴:**
 - tmuxセッション内で動作（`$TMUX`が必要）
 - 既存のCodexセッションを維持（コンテキストが保持される）
-- ペインIDは`.codex-pane-id`に保存され、次回自動検出
+- ペインIDは`tmp/codex-pane-id`に保存され、次回自動検出
 - **セッション状態管理**: 初回は完全コンテキスト、継続時は軽量な`## Update`形式で送信（トークン節約）
-- セッションは30分でタイムアウト（`.codex-session-state`で管理）
+- セッションは30分でタイムアウト（`tmp/codex-session-state`で管理）
+
+### プロジェクト内ソケットでの双方向通信（高度な使い方）
+
+`workspace-write` sandboxでCodexからClaude Codeへの通信を可能にするため、プロジェクト内にtmuxソケットを作成できます。
+
+```bash
+# ヘルパーをsource
+source scripts/codex-helpers.sh
+
+# collabセッションを作成（Codex自動起動）
+codex_collab_session_start --start-codex --attach
+
+# または手動でセッション作成
+tmux -S ./collab.sock new-session -s collab
+```
+
+**メリット:**
+- `workspace-write` sandboxでも双方向通信が可能
+- ポーリング不要のイベントドリブン完了検知（`wait-for`）
+- Codexの承認ダイアログを自動承認可能
+
+**構成:**
+```
+./collab.sock (プロジェクト内tmuxソケット)
+├── collab:1.0 - Claude Code (左ペイン)
+└── collab:1.1 - Codex (右ペイン)
+```
+
+詳細は `docs/bidirectional-communication-design.md` を参照してください。
 
 ### スキルの自動起動
 
