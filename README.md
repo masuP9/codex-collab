@@ -37,6 +37,32 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 /collab 新しい認証機能を実装して
 ```
 
+### `/collab-attach` コマンド
+
+既存のCodexペインに接続して、永続的なコラボレーションを行います。
+
+```
+# まず別ペインでCodexを起動（インタラクティブモード）
+tmux split-window -h 'codex'
+
+# 既存のCodexペインにプロンプトを送信
+/collab-attach この機能の設計を考えて
+
+# ステータス確認
+/collab-attach status
+
+# 出力をキャプチャ
+/collab-attach capture
+
+# ペインIDをクリア（別のCodexペインに接続したい場合）
+/collab-attach detach
+```
+
+**特徴:**
+- tmuxセッション内で動作（`$TMUX`が必要）
+- 既存のCodexセッションを維持（コンテキストが保持される）
+- ペインIDは`.codex-pane-id`に保存され、次回自動検出
+
 ### スキルの自動起動
 
 以下のようなリクエストで自動的にスキルが有効になります:

@@ -17,6 +17,8 @@ The primary pattern is "Review Type" where Codex creates plans and reviews imple
 
 **Key Feature**: WSL環境では、Codexは新しいペインで起動するため、リアルタイムで出力を確認できます。完了は自動検知されます。その他の環境では現在のターミナルで実行されます。
 
+**Alternative Mode**: `/collab-attach`コマンドで既存のCodexペインに接続し、永続的なコラボレーションが可能です（tmux環境のみ）。
+
 ## Prerequisites
 
 Before starting collaboration:
@@ -428,6 +430,49 @@ Auto-iterate on review findings:
 - `review.user_confirm: never` - Auto-iterate without confirmation
 
 **Note:** `exchange.*` and `review.*` are completely independent (no inheritance).
+
+## Alternative: Persistent Collaboration with Attach Mode
+
+For ongoing collaboration with an existing Codex session, use `/collab-attach`:
+
+### Requirements
+
+- Must be inside a tmux session (`$TMUX` must be set)
+- Codex must be running in interactive mode in another pane
+
+### Usage
+
+```bash
+# Start Codex in a new pane (interactive mode)
+tmux split-window -h 'codex'
+
+# Send prompts to the existing Codex pane
+/collab-attach この機能の設計を考えて
+
+# Check status
+/collab-attach status
+
+# Capture output
+/collab-attach capture
+
+# Detach from pane (clear stored pane ID)
+/collab-attach detach
+```
+
+### When to Use Attach Mode
+
+- **Persistent context**: Codex maintains conversation history across multiple prompts
+- **Interactive exploration**: Quick back-and-forth discussions with Codex
+- **Manual control**: You control when to send prompts and can view Codex's real-time output
+
+### Differences from /collab
+
+| Feature | /collab | /collab-attach |
+|---------|---------|----------------|
+| Codex mode | exec (single prompt) | Interactive (persistent) |
+| Context | Stateless per call | Maintained across calls |
+| Pane management | Auto-creates and closes | Uses existing pane |
+| Best for | Structured workflows | Exploratory discussions |
 
 ## References
 
