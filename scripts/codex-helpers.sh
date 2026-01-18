@@ -1187,7 +1187,7 @@ codex_get_field() {
   local metadata="$1"
   local field="$2"
 
-  echo "$metadata" | grep "^${field}:" | sed "s/^${field}: *//" | head -1
+  echo "$metadata" | grep "^${field}:" | sed "s/^${field}: *//" | head -1 || true
 }
 
 # Get the status field (continue/stop)
