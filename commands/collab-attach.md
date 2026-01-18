@@ -279,7 +279,7 @@ echo "${PROMPT_CONTENT}${MARKER_INSTRUCTION}" > "$TEMP_PROMPT"
 tmux load-buffer "$TEMP_PROMPT"
 tmux paste-buffer -t "$CODEX_PANE"
 # Small delay to ensure paste completes before sending Enter
-sleep 0.1
+sleep 0.2
 tmux send-keys -t "$CODEX_PANE" Enter
 rm -f "$TEMP_PROMPT"
 

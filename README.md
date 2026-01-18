@@ -38,6 +38,12 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 /collab 新しい認証機能を実装して
 ```
 
+**自動検出機能 (tmuxモード):**
+- tmuxセッション内で実行時、`.codex-pane-id`がなくても既存のCodexペインを自動検出
+- 検出されたペインは`.codex-pane-id`に保存され、attached modeで使用
+- 複数のCodexペインがある場合は最初のペインを使用（警告を表示）
+- Codexペインが見つからない場合は従来通り新規`codex exec`を起動
+
 ### `/collab-attach` コマンド
 
 既存のCodexペインに接続して、永続的なコラボレーションを行います。
