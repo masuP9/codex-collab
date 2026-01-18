@@ -9,10 +9,10 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 Execute a collaborative workflow between Claude Code and Codex CLI.
 
 **Launch modes** (`launch.mode` setting):
-- **tmux** (recommended): Codexはバックグラウンドのtmuxウィンドウで実行。フォーカスを奪わない。`tmux attach -t codex-collab`で出力確認可能。
+- **tmux**: tmuxセッション内の場合、新しいウィンドウで実行。フォーカスを奪わない。`Ctrl+b w`でウィンドウ一覧から確認可能。
 - **wt**: Windows Terminalの新しいペインで実行。フォーカスを奪う可能性あり。
 - **inline**: 現在のターミナルで実行（完了までブロック）。
-- **auto** (default): 利用可能な方法を自動選択（tmux → wt → inline）。
+- **auto** (default): tmuxセッション内 → tmux、それ以外 → wt → inline。
 
 ## Task
 
@@ -95,9 +95,11 @@ EOF
 **2. Determine launch mode:**
 
 Apply launch mode based on `launch.mode` setting:
-- **auto** (default): Detect available methods in order: tmux → wt.exe → inline
-- **tmux**: Force tmux mode (error if tmux not available)
+- **auto** (default): If inside tmux session → tmux, else → wt.exe → inline
+- **tmux**: Force tmux mode (error if not in tmux session)
 - **wt**: Force Windows Terminal mode (error if wt.exe not available)
+
+> **Note:** tmux mode only works when already inside a tmux session (`$TMUX` is set). This allows Codex to run in a new window within the same session, visible via `Ctrl+b w` (window list). Outside tmux, wt.exe provides real-time output visibility.
 
 ```bash
 # Read settings from .claude/codex-collab.local.md (YAML frontmatter)
@@ -109,8 +111,8 @@ Apply launch mode based on `launch.mode` setting:
 # Validate and resolve launch mode
 case "$LAUNCH_MODE_SETTING" in
   tmux)
-    if ! command -v tmux &>/dev/null; then
-      echo "Error: tmux is not installed. Install tmux or set launch.mode to 'wt' or 'auto'."
+    if [ -z "$TMUX" ]; then
+      echo "Error: Not inside a tmux session. Run 'tmux' first or set launch.mode to 'wt' or 'auto'."
       exit 1
     fi
     LAUNCH_MODE="tmux"
@@ -123,9 +125,9 @@ case "$LAUNCH_MODE_SETTING" in
     LAUNCH_MODE="wt"
     ;;
   auto|*)
-    # Auto-detect: tmux → wt → inline
+    # Auto-detect: if in tmux → tmux, else → wt → inline
     LAUNCH_MODE="inline"
-    if command -v tmux &>/dev/null; then
+    if [ -n "$TMUX" ]; then
       LAUNCH_MODE="tmux"
     elif command -v wt.exe &>/dev/null; then
       LAUNCH_MODE="wt"
@@ -413,14 +415,16 @@ rm -f "$(pwd)/.codex-review-output.md" "$(pwd)/.codex-review-prompt.txt"
 
 **Launch mode errors:**
 
-If `launch.mode=tmux` but tmux is not available:
-- Error: "tmux is not installed. Install tmux or set launch.mode to 'wt' or 'auto'."
+If `launch.mode=tmux` but not inside a tmux session:
+- Error: "Not inside a tmux session. Run 'tmux' first or set launch.mode to 'wt' or 'auto'."
 
 If `launch.mode=wt` but wt.exe is not available:
 - Error: "wt.exe is not available. Set launch.mode to 'tmux' or 'auto'."
 
 If `launch.mode=auto`:
-- Detect available methods and use the first available: tmux → wt.exe → inline
+- If inside tmux session (`$TMUX` set) → use tmux
+- Else if wt.exe available → use wt
+- Else → use inline
 - Inform user which mode was selected
 
 **Other errors:**
@@ -442,10 +446,10 @@ If timeout (`codex.wait_timeout`, default 180s) without completion marker:
 ## Notes
 
 - **Launch modes**:
-  - **tmux** (recommended): Codex runs in background tmux window. No focus stealing. Use `tmux attach -t codex-collab` to view output.
+  - **tmux**: Only works when inside a tmux session (`$TMUX` set). Runs in a new window within the same session. No focus stealing. Use `Ctrl+b w` to switch windows.
   - **wt**: Windows Terminal new pane. May steal focus (GitHub issue #17460).
   - **inline**: Runs in current terminal. Blocks until completion.
-  - **auto** (default): Automatically selects tmux → wt → inline based on availability.
+  - **auto** (default): If inside tmux session → tmux, else → wt → inline.
 - Output files are saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are explicitly unstaged after `git add -A` to ensure they don't appear in review diffs
 - Completion marker `=== CODEX_DONE ===` is appended to output file
 - Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)

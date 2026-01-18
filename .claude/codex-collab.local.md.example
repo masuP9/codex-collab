@@ -12,8 +12,10 @@ codex:
 
 # Launch mode settings (how Codex is launched)
 launch:
-  mode: auto               # auto | wt | tmux (auto: tmux → wt → inline)
-  tmux_session: codex-collab  # tmux session name (only used when mode=tmux or auto selects tmux)
+  mode: auto               # auto | wt | tmux
+                           # auto: tmuxセッション内→tmux, それ以外→wt→inline
+                           # tmux: tmuxセッション内でのみ動作
+  tmux_session: codex-collab  # tmux session name (tmuxモード時のみ使用)
 
 # Planning exchange settings (Codex plans → Claude questions → Codex refines)
 exchange:

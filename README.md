@@ -24,8 +24,8 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 
 - OpenAI Codex CLI (`codex`) がインストールされていること
 - 環境変数 `OPENAI_API_KEY` が設定されていること
-- 推奨: tmux がインストールされていること（フォーカスを奪わずにCodexを実行可能）
-- オプション: Windows Terminal (`wt.exe`) が利用可能であること（WSL環境）
+- WSL環境: Windows Terminal (`wt.exe`) が利用可能であること（リアルタイム出力確認用）
+- オプション: tmuxセッション内で作業している場合、フォーカスを奪わずにCodexを実行可能
 
 ## 使い方
 
@@ -81,18 +81,18 @@ Codexの起動方法を選択できます:
 
 | モード | 説明 | フォーカス奪取 |
 |--------|------|---------------|
-| `tmux` | バックグラウンドのtmuxウィンドウで実行 | なし |
+| `tmux` | tmuxセッション内の新しいウィンドウで実行 | なし |
 | `wt` | Windows Terminalの新しいペインで実行 | あり |
 | `inline` | 現在のターミナルで実行（ブロッキング） | - |
-| `auto` | 利用可能な方法を自動選択（tmux優先） | 状況による |
+| `auto` | tmuxセッション内ならtmux、そうでなければwt→inline | 状況による |
 
-**tmuxモード使用時のコマンド:**
-```bash
-# 実行中のCodexを確認
-tmux attach -t codex-collab
+> **Note:** tmuxモードはtmuxセッション内でのみ動作します。autoモードでは、tmuxセッション内にいる場合のみtmuxが選択され、それ以外はwt.exeが優先されます。
 
-# セッションを終了
-tmux kill-session -t codex-collab
+**tmuxモード使用時のキー操作:**
+```
+Ctrl+b w    # ウィンドウ一覧を表示（Codexの出力を確認）
+Ctrl+b n    # 次のウィンドウへ
+Ctrl+b p    # 前のウィンドウへ
 ```
 
 ### 設定の優先順位
