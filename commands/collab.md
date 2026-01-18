@@ -127,6 +127,53 @@ if [ -n "$TMUX" ] && [ "${PREFER_ATTACHED:-true}" = "true" ]; then
     fi
   fi
 
+  # Auto-detect Codex pane if not found via stored ID
+  if [ -z "$ATTACHED_PANE" ]; then
+    echo "No stored pane ID or invalid, scanning for Codex panes..."
+
+    # Check if tmux list-panes works
+    PANE_LIST=$(tmux list-panes -a -F '#{pane_id}' 2>&1)
+    if [ $? -ne 0 ]; then
+      echo "Warning: Failed to list tmux panes, skipping auto-detection"
+      echo "Error: $PANE_LIST"
+    else
+      # Search all panes for Codex (node process with Codex banner)
+      CODEX_PANES=""
+      for pane in $PANE_LIST; do
+        PANE_CMD=$(tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null)
+        if [ "$PANE_CMD" = "node" ]; then
+          PANE_CONTENT=$(tmux capture-pane -t "$pane" -p -S -2000 2>/dev/null)
+          if echo "$PANE_CONTENT" | grep -q "│ >_ OpenAI Codex"; then
+            if [ -z "$CODEX_PANES" ]; then
+              CODEX_PANES="$pane"
+            else
+              CODEX_PANES="$CODEX_PANES $pane"
+            fi
+          fi
+        fi
+      done
+
+      # Handle detection results
+      if [ -n "$CODEX_PANES" ]; then
+        PANE_COUNT=$(echo "$CODEX_PANES" | wc -w | tr -d ' ')
+        if [ "$PANE_COUNT" -eq 1 ]; then
+          ATTACHED_PANE=$(echo "$CODEX_PANES" | tr -d ' ')
+          echo "Auto-detected Codex pane: $ATTACHED_PANE"
+          echo "$ATTACHED_PANE" > "$PANE_ID_FILE"
+          echo "Saved pane ID to $PANE_ID_FILE"
+        elif [ "$PANE_COUNT" -gt 1 ]; then
+          echo "Warning: Multiple Codex panes found ($PANE_COUNT): $CODEX_PANES"
+          ATTACHED_PANE=$(echo "$CODEX_PANES" | awk '{print $1}')
+          echo "Using first pane: $ATTACHED_PANE"
+          echo "To use a different pane, set .codex-pane-id manually or use /collab-attach"
+          echo "$ATTACHED_PANE" > "$PANE_ID_FILE"
+        fi
+      else
+        echo "No Codex pane found, will launch new instance"
+      fi
+    fi
+  fi
+
   # *** CONTROL FLOW ***
   # If attached pane found, skip to Step 3-Attached and do NOT run Step 3/4
   if [ -n "$ATTACHED_PANE" ]; then
@@ -276,7 +323,7 @@ echo "${PROMPT_CONTENT}${MARKER_INSTRUCTION}" > "$TEMP_PROMPT"
 tmux load-buffer "$TEMP_PROMPT"
 tmux paste-buffer -t "$ATTACHED_PANE"
 # Small delay to ensure paste completes before sending Enter
-sleep 0.1
+sleep 0.2
 tmux send-keys -t "$ATTACHED_PANE" Enter
 rm -f "$TEMP_PROMPT"
 
