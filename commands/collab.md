@@ -8,8 +8,11 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 
 Execute a collaborative workflow between Claude Code and Codex CLI.
 
-**WSL環境**: Codexは新しいペインで起動するため、リアルタイムで出力を確認できます。完了は自動検知されます。
-**その他の環境**: 現在のターミナルで実行されます（完了まで出力は表示されません）。
+**Launch modes** (`launch.mode` setting):
+- **tmux** (recommended): Codexはバックグラウンドのtmuxウィンドウで実行。フォーカスを奪わない。`tmux attach -t codex-collab`で出力確認可能。
+- **wt**: Windows Terminalの新しいペインで実行。フォーカスを奪う可能性あり。
+- **inline**: 現在のターミナルで実行（完了までブロック）。
+- **auto** (default): 利用可能な方法を自動選択（tmux → wt → inline）。
 
 ## Task
 
@@ -29,6 +32,9 @@ Check for project-specific settings:
 - sandbox: read-only
 - **Timeout** (codex.*):
   - codex.wait_timeout: 180 (seconds, max 600)
+- **Launch mode** (launch.*):
+  - launch.mode: auto (options: auto, wt, tmux)
+  - launch.tmux_session: codex-collab
 - **Planning exchange** (exchange.*):
   - exchange.enabled: true
   - exchange.max_iterations: 3
@@ -47,9 +53,9 @@ Before requesting a plan from Codex:
 3. Gather relevant context by reading key files
 4. Prepare a summary for Codex
 
-### Step 3: Request Plan from Codex (New Pane)
+### Step 3: Request Plan from Codex
 
-Launch Codex in a new pane. Output is saved to project directory for sharing between WSL sessions.
+Launch Codex based on `launch.mode` setting. Output is saved to project directory for sharing between sessions.
 
 **1. Prepare files:**
 ```bash
@@ -86,16 +92,86 @@ Provide your plan now.
 EOF
 ```
 
-**2. Launch Codex in new pane (WSL/Windows Terminal):**
+**2. Determine launch mode:**
+
+Apply launch mode based on `launch.mode` setting:
+- **auto** (default): Detect available methods in order: tmux → wt.exe → inline
+- **tmux**: Force tmux mode (error if tmux not available)
+- **wt**: Force Windows Terminal mode (error if wt.exe not available)
+
 ```bash
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
+# Read settings from .claude/codex-collab.local.md (YAML frontmatter)
+# LAUNCH_MODE_SETTING = launch.mode from settings (default: auto)
+# TMUX_SESSION_SETTING = launch.tmux_session from settings (default: codex-collab)
+# SANDBOX_SETTING = sandbox from settings (default: read-only)
+# MODEL_SETTING = model from settings (optional)
+
+# Validate and resolve launch mode
+case "$LAUNCH_MODE_SETTING" in
+  tmux)
+    if ! command -v tmux &>/dev/null; then
+      echo "Error: tmux is not installed. Install tmux or set launch.mode to 'wt' or 'auto'."
+      exit 1
+    fi
+    LAUNCH_MODE="tmux"
+    ;;
+  wt)
+    if ! command -v wt.exe &>/dev/null; then
+      echo "Error: wt.exe is not available. Set launch.mode to 'tmux' or 'auto'."
+      exit 1
+    fi
+    LAUNCH_MODE="wt"
+    ;;
+  auto|*)
+    # Auto-detect: tmux → wt → inline
+    LAUNCH_MODE="inline"
+    if command -v tmux &>/dev/null; then
+      LAUNCH_MODE="tmux"
+    elif command -v wt.exe &>/dev/null; then
+      LAUNCH_MODE="wt"
+    fi
+    ;;
+esac
+echo "Using launch mode: $LAUNCH_MODE"
 ```
 
-Replace `[PROMPT_FILE]` and `[OUTPUT_FILE]` with absolute paths.
+**3. Launch Codex:**
+
+**tmux mode** (recommended - no focus stealing):
+```bash
+SESSION="${TMUX_SESSION_SETTING:-codex-collab}"
+WINDOW="codex-plan-$(date +%s)"
+PROMPT="$CODEX_PROMPT"
+OUTPUT="$CODEX_OUTPUT"
+SANDBOX="${SANDBOX_SETTING:-read-only}"
+
+# Create session if not exists, or use existing
+tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION"
+
+# Run Codex in a new window (detached)
+tmux new-window -d -t "$SESSION" -n "$WINDOW" \
+  "cd \"$(pwd)\"; cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\" && echo '=== CODEX_DONE ===' >> \"$OUTPUT\""
+
+echo "Codex running in tmux session '$SESSION' window '$WINDOW'"
+echo "To attach: tmux attach -t $SESSION"
+echo "To view window: tmux select-window -t $SESSION:$WINDOW"
+```
+
+**wt mode** (Windows Terminal - may steal focus):
+```bash
+SANDBOX="${SANDBOX_SETTING:-read-only}"
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat \"$CODEX_PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$CODEX_OUTPUT\" && echo '=== CODEX_DONE ===' >> \"$CODEX_OUTPUT\""
+```
+
+**inline mode** (fallback - blocks terminal):
+```bash
+SANDBOX="${SANDBOX_SETTING:-read-only}"
+cat "$CODEX_PROMPT" | codex exec -s "$SANDBOX" - 2>&1 | tee "$CODEX_OUTPUT" && echo '=== CODEX_DONE ===' >> "$CODEX_OUTPUT"
+```
 
 **Options to include based on settings:**
-- `-m, --model <model>` - Specify model (e.g., o4-mini, o3)
-- `-s, --sandbox <mode>` - read-only | workspace-write | danger-full-access
+- `-m, --model <model>` - Specify model (e.g., o4-mini, o3) from `model` setting
+- `-s, --sandbox <mode>` - read-only | workspace-write | danger-full-access from `sandbox` setting
 
 ### Step 4: Wait for Codex Completion (Auto-detect)
 
@@ -250,13 +326,32 @@ Provide your review now.
 EOF
 ```
 
-**2. Launch Codex and wait for completion:**
+**2. Launch Codex for review:**
+
+Use the same launch mode as Step 3. For tmux mode:
 ```bash
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [REVIEW_PROMPT] | codex exec -s read-only - 2>&1 | tee [CODEX_REVIEW] && echo '=== CODEX_DONE ===' >> [CODEX_REVIEW]"
+SESSION="${TMUX_SESSION_SETTING:-codex-collab}"
+WINDOW="codex-review-$(date +%s)"
+PROMPT="$REVIEW_PROMPT"
+OUTPUT="$CODEX_REVIEW"
+SANDBOX="${SANDBOX_SETTING:-read-only}"
+
+tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION"
+tmux new-window -d -t "$SESSION" -n "$WINDOW" \
+  "cd \"$(pwd)\"; cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\" && echo '=== CODEX_DONE ===' >> \"$OUTPUT\""
+
+echo "Codex review running in tmux session '$SESSION' window '$WINDOW'"
+```
+
+For wt mode:
+```bash
+SANDBOX="${SANDBOX_SETTING:-read-only}"
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat \"$REVIEW_PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$CODEX_REVIEW\" && echo '=== CODEX_DONE ===' >> \"$CODEX_REVIEW\""
 ```
 
 > **Important:** Set Bash tool's `timeout` parameter to match or exceed `codex.wait_timeout` (in milliseconds).
 
+**3. Wait for completion:**
 ```bash
 # Auto-detect completion (WAIT_TIMEOUT from settings, default: 180)
 for i in $(seq 1 $WAIT_TIMEOUT); do
@@ -316,10 +411,19 @@ rm -f "$(pwd)/.codex-review-output.md" "$(pwd)/.codex-review-prompt.txt"
 
 ## Error Handling
 
-If `wt.exe` is not available (non-WSL/Linux環境):
-- Fall back to `codex exec` in current terminal
-- Inform user: "WSL環境ではないため、現在のターミナルでCodexを実行します。完了まで出力は表示されません。"
-- 出力はファイルに保存されるので、完了後に結果を確認できます
+**Launch mode errors:**
+
+If `launch.mode=tmux` but tmux is not available:
+- Error: "tmux is not installed. Install tmux or set launch.mode to 'wt' or 'auto'."
+
+If `launch.mode=wt` but wt.exe is not available:
+- Error: "wt.exe is not available. Set launch.mode to 'tmux' or 'auto'."
+
+If `launch.mode=auto`:
+- Detect available methods and use the first available: tmux → wt.exe → inline
+- Inform user which mode was selected
+
+**Other errors:**
 
 If `codex` command is not available:
 - Inform user: "Codex CLI is not installed or not in PATH. Would you like to proceed with Claude-only mode?"
@@ -330,15 +434,18 @@ If Codex returns an error:
 - Offer to retry or proceed manually
 
 If timeout (`codex.wait_timeout`, default 180s) without completion marker:
-1. **Check Codex status** - Is Codex still running in the other pane?
+1. **Check Codex status** - Is Codex still running in the tmux window/other pane?
 2. **If still running** → Re-run wait loop with Bash `timeout` parameter extended (up to max 600000ms)
 3. **If completed but marker missing** → Read partial output and report to user
 4. **If Codex failed** → Report error and offer to retry or proceed manually
 
 ## Notes
 
-- **WSL環境**: 新しいペインでCodexが起動し、リアルタイムで出力を確認可能。完了は自動検知。
-- **その他の環境**: 現在のターミナルで実行（完了まで出力は非表示）
+- **Launch modes**:
+  - **tmux** (recommended): Codex runs in background tmux window. No focus stealing. Use `tmux attach -t codex-collab` to view output.
+  - **wt**: Windows Terminal new pane. May steal focus (GitHub issue #17460).
+  - **inline**: Runs in current terminal. Blocks until completion.
+  - **auto** (default): Automatically selects tmux → wt → inline based on availability.
 - Output files are saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are explicitly unstaged after `git add -A` to ensure they don't appear in review diffs
 - Completion marker `=== CODEX_DONE ===` is appended to output file
 - Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)

@@ -24,7 +24,8 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 
 - OpenAI Codex CLI (`codex`) がインストールされていること
 - 環境変数 `OPENAI_API_KEY` が設定されていること
-- WSL環境: Windows Terminal (`wt.exe`) が利用可能であること
+- 推奨: tmux がインストールされていること（フォーカスを奪わずにCodexを実行可能）
+- オプション: Windows Terminal (`wt.exe`) が利用可能であること（WSL環境）
 
 ## 使い方
 
@@ -64,6 +65,8 @@ sandbox: read-only
 |-----------|-----------|------|
 | `model` | (Codexデフォルト) | 使用するモデル (o3, o4-mini等) |
 | `sandbox` | `read-only` | サンドボックスモード (read-only, workspace-write, danger-full-access) |
+| `launch.mode` | `auto` | 起動モード (auto, tmux, wt)。autoは tmux → wt → inline の順で自動選択 |
+| `launch.tmux_session` | `codex-collab` | tmuxセッション名 |
 | `exchange.enabled` | `true` | Planning exchangeのグローバルキルスイッチ |
 | `exchange.max_iterations` | `3` | Planning exchangeの最大ラウンド数 |
 | `exchange.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
@@ -71,6 +74,26 @@ sandbox: read-only
 | `review.enabled` | `true` | Review iterationの有効化 |
 | `review.max_iterations` | `5` | Review iterationの最大ラウンド数（ゴールが明確なので多め） |
 | `review.user_confirm` | `never` | レビュー時は自動でイテレーション |
+
+### Launch Mode について
+
+Codexの起動方法を選択できます:
+
+| モード | 説明 | フォーカス奪取 |
+|--------|------|---------------|
+| `tmux` | バックグラウンドのtmuxウィンドウで実行 | なし |
+| `wt` | Windows Terminalの新しいペインで実行 | あり |
+| `inline` | 現在のターミナルで実行（ブロッキング） | - |
+| `auto` | 利用可能な方法を自動選択（tmux優先） | 状況による |
+
+**tmuxモード使用時のコマンド:**
+```bash
+# 実行中のCodexを確認
+tmux attach -t codex-collab
+
+# セッションを終了
+tmux kill-session -t codex-collab
+```
 
 ### 設定の優先順位
 

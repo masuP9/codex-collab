@@ -10,6 +10,11 @@ sandbox: read-only
 codex:
   wait_timeout: 180        # seconds (default: 180, max: 600)
 
+# Launch mode settings (how Codex is launched)
+launch:
+  mode: auto               # auto | wt | tmux (auto: tmux → wt → inline)
+  tmux_session: codex-collab  # tmux session name (only used when mode=tmux or auto selects tmux)
+
 # Planning exchange settings (Codex plans → Claude questions → Codex refines)
 exchange:
   enabled: true              # Global kill-switch for planning exchanges
