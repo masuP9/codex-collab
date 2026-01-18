@@ -53,14 +53,18 @@ codex-collab/
 - `codex_find_pane()` - Codexペイン検出（保存ID + 自動検出）
 - `codex_verify_pane()` - ペインの有効性検証
 - `codex_send_prompt()` - tmux paste-bufferでのプロンプト送信
+- `codex_send_prompt_file()` - ファイル参照によるプロンプト送信（長いプロンプト向け）
+- `codex_clear_input()` - ペイン入力欄のクリア
 - `codex_wait_completion()` - マーカー + アイドル検出による完了待機
 - `codex_capture_output()` - ペイン出力のキャプチャ
 - `codex_check_tmux()` - tmuxセッション確認
 
-**双方向通信（バッファ + シグナル）:**
-- `codex_set_buffer()` / `codex_get_buffer()` - tmuxバッファでデータ共有
-- `codex_send_signal()` / `codex_wait_signal()` - イベントドリブン完了通知
-- `codex_wait_response()` / `codex_respond()` - 統合パターン
+**軽量メタデータ抽出:**
+- `codex_extract_metadata()` - 応答末尾のYAMLブロックを抽出
+- `codex_get_status()` - status フィールド取得（continue/stop）
+- `codex_get_verdict()` - verdict フィールド取得（pass/conditional/fail）
+- `codex_get_list()` - リストフィールド取得
+- `codex_parse_response()` - 応答を本文とメタデータに分離
 
 **自動承認（セキュア）:**
 - `codex_get_pending_command()` - アクティブな承認ダイアログを検出
@@ -215,152 +219,94 @@ Codexの起動方法を選択できます:
 6. Claude Code: 修正（必要に応じて）・完了報告
 ```
 
-## 構造化通信プロトコル
+## 軽量メタデータプロトコル
 
-Claude Code と Codex CLI 間の通信を構造化するための YAML ベースのプロトコルを実装しています。
+Claude Code と Codex CLI 間の議論をサポートする軽量なメタデータ形式を採用しています。
 
-### プロトコルの目的
+### 設計思想
 
-- **一貫性**: 両者間のメッセージ形式を統一
-- **パース可能**: YAML形式で機械的に処理可能
-- **ゼロ設定**: プロジェクトごとの設定不要（プラグインが自動でヘッダーを付与）
+- **本文は自然言語のまま**: LLM の表現力を制限しない
+- **メタデータは末尾に付加**: 応答の最後に YAML ブロックとして追加
+- **フォールバック可能**: メタデータがなくても本文は読める
 
-### プロトコルヘッダー
+### メタデータ形式
 
-すべての Codex へのプロンプトに以下のヘッダーが自動的に付与されます：
+応答の末尾に `---` で囲まれた YAML ブロックを付加：
 
-```yaml
-## Protocol (codex-collab/v1)
-format: yaml
-rules:
-  - respond with exactly one top-level YAML mapping
-  - include required fields: type, id, status, body
-  - if unsure or blocked, use type=action_request with clarifying questions
-  - include next_action (continue|stop) to signal exchange flow
-types:
-  task_card: {body: title, context, requirements, acceptance_criteria, proposed_steps, risks, test_considerations}
-  result_report: {body: summary, changes, tests, risks, checks}
-  action_request: {body: question, options, expected_response}
-  review: {body: verdict, summary, findings, suggestions}
-status: [ok, partial, blocked]
-verdict: [pass, conditional, fail]
-severity: [low, medium, high]
-next_action: [continue, stop]
+```markdown
+（自然言語の応答本文）
+
+...議論や説明...
+
+---
+status: stop
+verdict: conditional
+open_questions:
+  - 認証方式の選択
+findings:
+  - severity: medium
+    message: 入力バリデーションが不足
+---
 ```
 
-### メッセージタイプ
+### フィールド一覧
 
-| タイプ | 用途 | 使用者 |
-|--------|------|--------|
-| `task_card` | タスク定義と受け入れ基準 | Codex（計画時） |
-| `result_report` | 実行結果とチェック状態 | Claude（報告時） |
-| `action_request` | 情報や決定の要求 | 両方 |
-| `review` | レビュー結果と指摘事項 | Codex（レビュー時） |
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `status` | enum | `continue` / `stop` - 議論を続けるか終了するか |
+| `verdict` | enum | `pass` / `conditional` / `fail` - レビュー判定 |
+| `open_questions` | list | 未解決の質問 |
+| `decisions` | list | 合意した決定事項 |
+| `findings` | list | 発見事項（severity, message） |
 
-### メッセージ例
+### 使用例
 
-**Codexからの計画（task_card）:**
+**レビュー応答:**
 
-```yaml
-type: task_card
-id: plan-001
-status: ok
-body:
-  title: "認証機能の実装"
-  context: "既存のExpress APIに認証を追加"
-  requirements:
-    - "JWT ベースの認証"
-    - "ログイン/ログアウト エンドポイント"
-  acceptance_criteria:
-    - "認証なしでは保護されたルートにアクセスできない"
-    - "有効なトークンで認証が成功する"
-  proposed_steps:
-    - step: 1
-      action: create
-      file: src/middleware/auth.ts
-      description: "JWT検証ミドルウェアを作成"
-    - step: 2
-      action: modify
-      file: src/routes/index.ts
-      description: "認証ルートを追加"
-  risks:
-    - "既存のルートに影響する可能性"
-  test_considerations:
-    - "認証成功/失敗のテストケース"
+```markdown
+コードを確認しました。全体的に良い実装ですが、改善点があります。
+
+1. `validate_input()` で空文字列のチェックが抜けています
+2. エラーメッセージがハードコードされています
+
+---
+status: stop
+verdict: conditional
+findings:
+  - severity: medium
+    message: validate_input() で空文字列チェックが不足
+  - severity: low
+    message: エラーメッセージのハードコード
+---
 ```
 
-**Codexからのレビュー（review）:**
+**議論応答（継続）:**
 
-```yaml
-type: review
-id: review-001
-status: ok
-body:
-  verdict: conditional
-  summary: "実装は概ね良好だが、エラーハンドリングに改善の余地あり"
-  findings:
-    - severity: medium
-      location: src/middleware/auth.ts:25
-      message: "トークン期限切れ時のエラーメッセージが不明確"
-      suggestion: "具体的なエラーコードを返す"
-    - severity: low
-      location: src/routes/auth.ts:10
-      message: "ログ出力が不足"
-      suggestion: "認証イベントをログに記録"
-  suggestions:
-    - "レート制限の追加を検討"
-    - "リフレッシュトークンの実装"
+```markdown
+認証方式について検討しました。JWT と Session の両方に利点がありますが...
+
+いくつか確認したい点があります：
+- ユーザー数の想定規模は？
+- モバイルアプリからのアクセスは想定していますか？
+
+---
+status: continue
+open_questions:
+  - ユーザー規模の想定
+  - モバイルアプリ対応の有無
+decisions:
+  - REST API で実装する
+---
 ```
-
-### パース戦略
-
-- **寛容**: 必須フィールドのみを検証
-- **許容**: 追加フィールドを受け入れる
-- **フォールバック**: YAMLパースに失敗した場合は非構造化パースに切り替え
-
-### マルチターン交換
-
-#### Planning Exchange（計画段階）
-
-Codex が `next_action: continue` または `type: action_request` で応答した場合、Claude Code は交換ループに入ります：
-
-1. Claude が Codex の質問/リクエストに応答
-2. Codex が追加の回答または最終結果を返す
-3. `next_action: stop` または `exchange.max_iterations` に達するまで継続
-
-**設定 (`exchange.*`):**
-| 設定 | デフォルト | 説明 |
-|------|-----------|------|
-| `exchange.enabled` | `true` | グローバルキルスイッチ |
-| `exchange.max_iterations` | `3` | 最大イテレーション数 |
-| `exchange.user_confirm` | `on_important` | ユーザー確認タイミング |
-| `exchange.history_mode` | `summarize` | 履歴管理方式 |
-
-#### Review Iteration（レビュー段階）
-
-レビューで CONDITIONAL または FAIL が返された場合、自動的に修正→再レビューのイテレーションが行われます：
-
-1. Claude が指摘事項を修正
-2. Codex が再レビュー
-3. PASS または `review.max_iterations` に達するまで継続
-
-**設定 (`review.*`):**
-| 設定 | デフォルト | 説明 |
-|------|-----------|------|
-| `review.enabled` | `true` | レビューイテレーションの有効化 |
-| `review.max_iterations` | `5` | 最大イテレーション数（ゴールが明確なので多め） |
-| `review.user_confirm` | `never` | 自動でイテレーション |
-
-**注**: `exchange.*` と `review.*` は完全に独立した設定です（継承なし）。
 
 ### 関連ファイル
 
-詳細なスキーマとテンプレートは `skills/codex-collaboration/references/` にあります：
+詳細な仕様は `skills/codex-collaboration/references/` にあります：
 
-- `protocol-cheatsheet.yaml` - プロンプト用の最小限ヘッダー
-- `protocol-schema.yaml` - 完全なスキーマ定義と例
+- `lightweight-metadata.md` - 軽量メタデータプロトコル仕様
 - `planning-prompt.md` - 計画依頼テンプレート
 - `review-prompt.md` - レビュー依頼テンプレート
+- `deprecated/` - 旧構造化プロトコル（参考用）
 
 ## ライセンス
 
