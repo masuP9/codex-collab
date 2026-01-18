@@ -6,6 +6,10 @@ Copy this file to `.claude/codex-collab.local.md` and customize for your project
 model: o4-mini
 sandbox: read-only
 
+# Timeout settings
+codex:
+  wait_timeout: 180        # seconds (default: 180, max: 600)
+
 # Planning exchange settings (Codex plans → Claude questions → Codex refines)
 exchange:
   enabled: true              # Global kill-switch for planning exchanges
