@@ -210,7 +210,7 @@ echo "Current state hash: $BEFORE_HASH"
 
 ### Step 4: Send Prompt to Codex Pane
 
-Generate a unique marker and send the prompt. Use different templates for new vs continuing sessions:
+Generate a unique marker and send the prompt using file-based method. Use different templates for new vs continuing sessions:
 
 ```bash
 PROMPT_FILE="$TMP_DIR/codex-attach-prompt.txt"
@@ -240,30 +240,40 @@ PROMPT_EOF
   echo "Using lightweight template (continuing session, turn $TURN_COUNT)"
 fi
 
-PROMPT_CONTENT=$(cat "$PROMPT_FILE")
-
-# Use helper or inline fallback for sending prompt
-if type codex_send_prompt &>/dev/null; then
-  END_MARKER=$(codex_send_prompt "$CODEX_PANE" "$PROMPT_CONTENT")
+# Use file-based prompt sending (avoids paste-buffer issues with long prompts)
+if type codex_send_prompt_file &>/dev/null; then
+  END_MARKER=$(codex_send_prompt_file "$CODEX_PANE" "$PROMPT_FILE")
   echo "Prompt sent to Codex pane: $CODEX_PANE"
   echo "Completion marker: $END_MARKER"
 else
-  # Inline fallback
+  # Inline fallback: Send short reference prompt instead of full content
   MARKER_ID="$(date +%s)-$RANDOM"
   END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
-  TEMP_PROMPT="$TMP_DIR/codex-prompt-$$"
-  echo "${PROMPT_CONTENT}
 
-When finished, output exactly: ${END_MARKER}" > "$TEMP_PROMPT"
+  # Clear any existing input first
+  tmux send-keys -t "$CODEX_PANE" C-u
+  sleep 0.1
+
+  # Create short reference prompt
+  TEMP_PROMPT="$TMP_DIR/codex-prompt-$$"
+  cat > "$TEMP_PROMPT" << EOF
+Please read the instructions in ${PROMPT_FILE} and follow them.
+
+---
+IMPORTANT: After completing your response, output this exact marker on its own line:
+${END_MARKER}
+EOF
   tmux load-buffer "$TEMP_PROMPT"
   tmux paste-buffer -t "$CODEX_PANE"
-  sleep 0.2
+  sleep 0.5
   tmux send-keys -t "$CODEX_PANE" Enter
   rm -f "$TEMP_PROMPT"
   echo "Prompt sent to Codex pane: $CODEX_PANE"
   echo "Completion marker: $END_MARKER"
 fi
 ```
+
+> **Note:** File-based prompt sending references the instruction file by path instead of pasting the full content. This avoids paste-buffer corruption issues with long prompts.
 
 ### Step 5: Wait for Response
 
