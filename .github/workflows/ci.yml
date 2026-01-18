@@ -5,6 +5,14 @@ on:
   pull_request:
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run helper tests
+        run: bash scripts/test-helpers.sh
+
   lint:
     runs-on: ubuntu-latest
     steps:
