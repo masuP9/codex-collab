@@ -14,7 +14,7 @@ PRを作成する前に、変更内容に応じて `.claude-plugin/plugin.json` 
 
 ```json
 {
-  "version": "0.2.2"  // ← 変更内容に応じて更新
+  "version": "0.3.0"  // ← 変更内容に応じて更新
 }
 ```
 

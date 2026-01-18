@@ -21,12 +21,14 @@ $ARGUMENTS
 
 Check for project-specific settings:
 - Read `.claude/codex-collab.local.md` if it exists
-- Extract YAML frontmatter for: model, sandbox, exchange, review settings
+- Extract YAML frontmatter for: model, sandbox, codex, exchange, review settings
 - Apply settings priority: command args > project settings > defaults
 
 **Default settings:**
 - model: (Codex default)
 - sandbox: read-only
+- **Timeout** (codex.*):
+  - codex.wait_timeout: 180 (seconds, max 600)
 - **Planning exchange** (exchange.*):
   - exchange.enabled: true
   - exchange.max_iterations: 3
@@ -97,20 +99,34 @@ Replace `[PROMPT_FILE]` and `[OUTPUT_FILE]` with absolute paths.
 
 ### Step 4: Wait for Codex Completion (Auto-detect)
 
-Poll the output file for the completion marker:
+Poll the output file for the completion marker.
+
+> **Important:** Set the Bash tool's `timeout` parameter to `min(wait_timeout + 60, 600) * 1000` milliseconds. Example: for 180s wait, use `timeout: 240000`. Max: 600000ms (10 minutes).
 
 ```bash
+# WAIT_TIMEOUT from settings (default: 180 seconds)
 echo "Waiting for Codex..."
-for i in {1..120}; do
+COMPLETED=false
+for i in $(seq 1 $WAIT_TIMEOUT); do
   if grep -q "=== CODEX_DONE ===" "$CODEX_OUTPUT" 2>/dev/null; then
     echo "Codex completed after ${i}s"
+    COMPLETED=true
     break
   fi
   sleep 1
 done
+
+# Handle timeout
+if [ "$COMPLETED" = false ]; then
+  echo "Timeout after ${WAIT_TIMEOUT}s - checking Codex status..."
+fi
 ```
 
-Timeout after 120 seconds. If timeout, ask user if Codex is still running.
+**If timeout occurs (`COMPLETED=false`):**
+1. Check if Codex is still running in the other pane
+2. If still running → Re-run wait loop with extended timeout
+3. If completed but marker missing → Read partial output and report error
+4. If failed → Report error and offer to retry
 
 ### Step 5: Read and Process Response
 
@@ -237,9 +253,13 @@ EOF
 **2. Launch Codex and wait for completion:**
 ```bash
 wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [REVIEW_PROMPT] | codex exec -s read-only - 2>&1 | tee [CODEX_REVIEW] && echo '=== CODEX_DONE ===' >> [CODEX_REVIEW]"
+```
 
-# Auto-detect completion
-for i in {1..120}; do
+> **Important:** Set Bash tool's `timeout` parameter to match or exceed `codex.wait_timeout` (in milliseconds).
+
+```bash
+# Auto-detect completion (WAIT_TIMEOUT from settings, default: 180)
+for i in $(seq 1 $WAIT_TIMEOUT); do
   if grep -q "=== CODEX_DONE ===" "$CODEX_REVIEW" 2>/dev/null; then
     break
   fi
@@ -309,9 +329,11 @@ If Codex returns an error:
 - Report the error from the output file
 - Offer to retry or proceed manually
 
-If timeout (120s) without completion marker:
-- Ask user if Codex is still running
-- Offer to extend wait time or read partial output
+If timeout (`codex.wait_timeout`, default 180s) without completion marker:
+1. **Check Codex status** - Is Codex still running in the other pane?
+2. **If still running** → Re-run wait loop with Bash `timeout` parameter extended (up to max 600000ms)
+3. **If completed but marker missing** → Read partial output and report to user
+4. **If Codex failed** → Report error and offer to retry or proceed manually
 
 ## Notes
 
@@ -325,3 +347,4 @@ If timeout (120s) without completion marker:
 - **Multi-turn exchange**: Use `next_action: continue|stop` to control exchange flow. Planning exchange max iterations default is 3.
 - **Review iteration**: Enabled by default (`review.enabled: true`). Max iterations default is 5 (higher than exchange because goal is clear and diff is small).
 - **Independent settings**: `exchange.*` and `review.*` are completely independent (no inheritance). Each can be configured separately.
+- **Timeout configuration**: `codex.wait_timeout` (default: 180s, max: 600s) controls how long to wait for Codex. Set Bash tool's `timeout` parameter to `min(wait_timeout + 60, 600) * 1000` milliseconds.
