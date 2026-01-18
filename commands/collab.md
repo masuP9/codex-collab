@@ -33,8 +33,7 @@ Check for project-specific settings:
 - **Timeout** (codex.*):
   - codex.wait_timeout: 180 (seconds, max 600)
 - **Launch mode** (launch.*):
-  - launch.mode: auto (options: auto, wt, tmux)
-  - launch.tmux_session: codex-collab
+  - launch.mode: auto (options: auto, wt, tmux, inline)
 - **Planning exchange** (exchange.*):
   - exchange.enabled: true
   - exchange.max_iterations: 3
@@ -98,13 +97,13 @@ Apply launch mode based on `launch.mode` setting:
 - **auto** (default): If inside tmux session → tmux, else → wt.exe → inline
 - **tmux**: Force tmux mode (error if not in tmux session)
 - **wt**: Force Windows Terminal mode (error if wt.exe not available)
+- **inline**: Force inline mode (blocks terminal until completion)
 
 > **Note:** tmux mode only works when already inside a tmux session (`$TMUX` is set). This allows Codex to run in a new window within the same session, visible via `Ctrl+b w` (window list). Outside tmux, wt.exe provides real-time output visibility.
 
 ```bash
 # Read settings from .claude/codex-collab.local.md (YAML frontmatter)
 # LAUNCH_MODE_SETTING = launch.mode from settings (default: auto)
-# TMUX_SESSION_SETTING = launch.tmux_session from settings (default: codex-collab)
 # SANDBOX_SETTING = sandbox from settings (default: read-only)
 # MODEL_SETTING = model from settings (optional)
 
@@ -124,6 +123,9 @@ case "$LAUNCH_MODE_SETTING" in
     fi
     LAUNCH_MODE="wt"
     ;;
+  inline)
+    LAUNCH_MODE="inline"
+    ;;
   auto|*)
     # Auto-detect: if in tmux → tmux, else → wt → inline
     LAUNCH_MODE="inline"
@@ -141,22 +143,19 @@ echo "Using launch mode: $LAUNCH_MODE"
 
 **tmux mode** (recommended - no focus stealing):
 ```bash
-SESSION="${TMUX_SESSION_SETTING:-codex-collab}"
+# Use current tmux session (get session name from $TMUX)
+SESSION="$(tmux display-message -p '#S')"
 WINDOW="codex-plan-$(date +%s)"
 PROMPT="$CODEX_PROMPT"
 OUTPUT="$CODEX_OUTPUT"
 SANDBOX="${SANDBOX_SETTING:-read-only}"
 
-# Create session if not exists, or use existing
-tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION"
-
-# Run Codex in a new window (detached)
+# Run Codex in a new window within the current session (detached)
 tmux new-window -d -t "$SESSION" -n "$WINDOW" \
   "cd \"$(pwd)\"; cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\" && echo '=== CODEX_DONE ===' >> \"$OUTPUT\""
 
-echo "Codex running in tmux session '$SESSION' window '$WINDOW'"
-echo "To attach: tmux attach -t $SESSION"
-echo "To view window: tmux select-window -t $SESSION:$WINDOW"
+echo "Codex running in current tmux session '$SESSION' window '$WINDOW'"
+echo "To view: Ctrl+b w (window list) or Ctrl+b n/p (next/prev window)"
 ```
 
 **wt mode** (Windows Terminal - may steal focus):
@@ -332,17 +331,17 @@ EOF
 
 Use the same launch mode as Step 3. For tmux mode:
 ```bash
-SESSION="${TMUX_SESSION_SETTING:-codex-collab}"
+# Use current tmux session
+SESSION="$(tmux display-message -p '#S')"
 WINDOW="codex-review-$(date +%s)"
 PROMPT="$REVIEW_PROMPT"
 OUTPUT="$CODEX_REVIEW"
 SANDBOX="${SANDBOX_SETTING:-read-only}"
 
-tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION"
 tmux new-window -d -t "$SESSION" -n "$WINDOW" \
   "cd \"$(pwd)\"; cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\" && echo '=== CODEX_DONE ===' >> \"$OUTPUT\""
 
-echo "Codex review running in tmux session '$SESSION' window '$WINDOW'"
+echo "Codex review running in current tmux session '$SESSION' window '$WINDOW'"
 ```
 
 For wt mode:

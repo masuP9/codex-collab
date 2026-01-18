@@ -65,8 +65,7 @@ sandbox: read-only
 |-----------|-----------|------|
 | `model` | (Codexデフォルト) | 使用するモデル (o3, o4-mini等) |
 | `sandbox` | `read-only` | サンドボックスモード (read-only, workspace-write, danger-full-access) |
-| `launch.mode` | `auto` | 起動モード (auto, tmux, wt)。autoは tmux → wt → inline の順で自動選択 |
-| `launch.tmux_session` | `codex-collab` | tmuxセッション名 |
+| `launch.mode` | `auto` | 起動モード (auto, tmux, wt, inline)。autoはtmuxセッション内ならtmux、そうでなければwt→inline |
 | `exchange.enabled` | `true` | Planning exchangeのグローバルキルスイッチ |
 | `exchange.max_iterations` | `3` | Planning exchangeの最大ラウンド数 |
 | `exchange.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
@@ -81,16 +80,16 @@ Codexの起動方法を選択できます:
 
 | モード | 説明 | フォーカス奪取 |
 |--------|------|---------------|
-| `tmux` | tmuxセッション内の新しいウィンドウで実行 | なし |
+| `tmux` | 現在のtmuxセッション内の新しいウィンドウで実行 | なし |
 | `wt` | Windows Terminalの新しいペインで実行 | あり |
 | `inline` | 現在のターミナルで実行（ブロッキング） | - |
 | `auto` | tmuxセッション内ならtmux、そうでなければwt→inline | 状況による |
 
-> **Note:** tmuxモードはtmuxセッション内でのみ動作します。autoモードでは、tmuxセッション内にいる場合のみtmuxが選択され、それ以外はwt.exeが優先されます。
+> **Note:** tmuxモードは現在のtmuxセッション内に新しいウィンドウを作成します。`Ctrl+b w`でウィンドウ一覧を表示し、Codexの出力を確認できます。
 
 **tmuxモード使用時のキー操作:**
 ```
-Ctrl+b w    # ウィンドウ一覧を表示（Codexの出力を確認）
+Ctrl+b w    # ウィンドウ一覧を表示
 Ctrl+b n    # 次のウィンドウへ
 Ctrl+b p    # 前のウィンドウへ
 ```
