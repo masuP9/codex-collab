@@ -438,7 +438,7 @@ codex_capture_output() {
 # Usage: codex_check_tmux
 # Returns: 0 if in tmux, 1 otherwise
 codex_check_tmux() {
-  if [ -z "$TMUX" ]; then
+  if [ -z "${TMUX:-}" ]; then
     echo "Error: Not inside a tmux session. Run 'tmux' first." >&2
     return 1
   fi
