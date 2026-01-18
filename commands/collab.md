@@ -267,8 +267,17 @@ MARKER_INSTRUCTION="
 
 When finished, output exactly: $END_MARKER"
 
-# Send to attached pane
-tmux send-keys -t "$ATTACHED_PANE" "${PROMPT_CONTENT}${MARKER_INSTRUCTION}" Enter
+# Create temporary file with full prompt content
+TEMP_PROMPT="/tmp/codex-prompt-$$"
+echo "${PROMPT_CONTENT}${MARKER_INSTRUCTION}" > "$TEMP_PROMPT"
+
+# Send to attached pane using load-buffer + paste-buffer for reliable multi-line input
+# This avoids issues with special characters and long prompts in send-keys
+tmux load-buffer "$TEMP_PROMPT"
+tmux paste-buffer -t "$ATTACHED_PANE"
+tmux send-keys -t "$ATTACHED_PANE" Enter
+rm -f "$TEMP_PROMPT"
+
 echo "Prompt sent to attached Codex pane: $ATTACHED_PANE"
 echo "Completion marker: $END_MARKER"
 ```

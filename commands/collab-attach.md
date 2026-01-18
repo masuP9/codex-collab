@@ -195,9 +195,18 @@ When finished, output exactly: $END_MARKER"
 # Read prompt content
 PROMPT_CONTENT=$(cat "$PROMPT_FILE")
 
-# Send prompt + marker instruction
-# Note: Use 'Enter' instead of 'C-m' for better compatibility with Codex interactive mode
-tmux send-keys -t "$CODEX_PANE" "${PROMPT_CONTENT}${MARKER_INSTRUCTION}" Enter
+# Create temporary file with full prompt content
+TEMP_PROMPT="/tmp/codex-prompt-$$"
+echo "${PROMPT_CONTENT}${MARKER_INSTRUCTION}" > "$TEMP_PROMPT"
+
+# Send prompt using load-buffer + paste-buffer for reliable multi-line input
+# This avoids issues with special characters and long prompts in send-keys
+# Note: 'Enter' is sent separately after paste for Codex interactive mode compatibility
+tmux load-buffer "$TEMP_PROMPT"
+tmux paste-buffer -t "$CODEX_PANE"
+tmux send-keys -t "$CODEX_PANE" Enter
+rm -f "$TEMP_PROMPT"
+
 echo "Prompt sent to Codex pane: $CODEX_PANE"
 echo "Completion marker: $END_MARKER"
 ```
