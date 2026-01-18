@@ -10,6 +10,13 @@ sandbox: read-only
 codex:
   wait_timeout: 180        # seconds (default: 180, max: 600)
 
+# Launch mode settings (how Codex is launched)
+launch:
+  mode: auto               # auto | wt | tmux | inline
+                           # auto: tmuxセッション内→tmux, それ以外→wt→inline
+                           # tmux: 現在のペインを水平分割し右側で実行
+                           # inline: 現在のターミナルで実行（ブロッキング）
+
 # Planning exchange settings (Codex plans → Claude questions → Codex refines)
 exchange:
   enabled: true              # Global kill-switch for planning exchanges

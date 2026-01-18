@@ -24,7 +24,8 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 
 - OpenAI Codex CLI (`codex`) がインストールされていること
 - 環境変数 `OPENAI_API_KEY` が設定されていること
-- WSL環境: Windows Terminal (`wt.exe`) が利用可能であること
+- WSL環境: Windows Terminal (`wt.exe`) が利用可能であること（リアルタイム出力確認用）
+- オプション: tmuxセッション内で作業している場合、フォーカスを奪わずにCodexを実行可能
 
 ## 使い方
 
@@ -35,6 +36,32 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 ```
 /collab 新しい認証機能を実装して
 ```
+
+### `/collab-attach` コマンド
+
+既存のCodexペインに接続して、永続的なコラボレーションを行います。
+
+```
+# まず別ペインでCodexを起動（インタラクティブモード）
+tmux split-window -h 'codex'
+
+# 既存のCodexペインにプロンプトを送信
+/collab-attach この機能の設計を考えて
+
+# ステータス確認
+/collab-attach status
+
+# 出力をキャプチャ
+/collab-attach capture
+
+# ペインIDをクリア（別のCodexペインに接続したい場合）
+/collab-attach detach
+```
+
+**特徴:**
+- tmuxセッション内で動作（`$TMUX`が必要）
+- 既存のCodexセッションを維持（コンテキストが保持される）
+- ペインIDは`.codex-pane-id`に保存され、次回自動検出
 
 ### スキルの自動起動
 
@@ -64,6 +91,7 @@ sandbox: read-only
 |-----------|-----------|------|
 | `model` | (Codexデフォルト) | 使用するモデル (o3, o4-mini等) |
 | `sandbox` | `read-only` | サンドボックスモード (read-only, workspace-write, danger-full-access) |
+| `launch.mode` | `auto` | 起動モード (auto, tmux, wt, inline)。autoはtmuxセッション内ならtmux、そうでなければwt→inline |
 | `exchange.enabled` | `true` | Planning exchangeのグローバルキルスイッチ |
 | `exchange.max_iterations` | `3` | Planning exchangeの最大ラウンド数 |
 | `exchange.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
@@ -71,6 +99,19 @@ sandbox: read-only
 | `review.enabled` | `true` | Review iterationの有効化 |
 | `review.max_iterations` | `5` | Review iterationの最大ラウンド数（ゴールが明確なので多め） |
 | `review.user_confirm` | `never` | レビュー時は自動でイテレーション |
+
+### Launch Mode について
+
+Codexの起動方法を選択できます:
+
+| モード | 説明 | フォーカス奪取 | 完了検知 |
+|--------|------|---------------|---------|
+| `tmux` | 現在のペインを分割してCodexを実行（右側に表示） | なし | `tmux wait-for`（即時） |
+| `wt` | Windows Terminalの新しいペインで実行 | あり | ファイルポーリング |
+| `inline` | 現在のターミナルで実行（ブロッキング） | - | ファイルポーリング |
+| `auto` | tmuxセッション内ならtmux、そうでなければwt→inline | 状況による | モードに依存 |
+
+> **Note:** tmuxモードは現在のペインを水平分割し、右側でCodexを実行します。`tmux wait-for`によりCodex完了を即座に検知できます（ポーリング不要）。
 
 ### 設定の優先順位
 

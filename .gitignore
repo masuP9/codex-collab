@@ -14,3 +14,8 @@
 .codex-output.md
 .codex-output.txt
 .codex-prompt.txt
+
+# Attach mode files (persistent Codex pane collaboration)
+.codex-pane-id
+.codex-attach-prompt.txt
+.codex-attach-capture.txt

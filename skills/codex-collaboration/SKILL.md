@@ -17,6 +17,8 @@ The primary pattern is "Review Type" where Codex creates plans and reviews imple
 
 **Key Feature**: WSL環境では、Codexは新しいペインで起動するため、リアルタイムで出力を確認できます。完了は自動検知されます。その他の環境では現在のターミナルで実行されます。
 
+**Alternative Mode**: `/collab-attach`コマンドで既存のCodexペインに接続し、永続的なコラボレーションが可能です（tmux環境のみ）。
+
 ## Prerequisites
 
 Before starting collaboration:
@@ -59,12 +61,32 @@ EOF
 
 2. Launch Codex in a new pane:
 
-**WSL / Windows Terminal:**
+**tmux mode** (recommended - instant completion detection):
 ```bash
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
+# Unique signal: PID + timestamp + random suffix to avoid collisions
+SIGNAL="codex-plan-$$-$(date +%s)-$RANDOM"
+tmux split-window -h -d \
+  "cd \"$(pwd)\"; \
+   cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE]; \
+   echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]; \
+   tmux wait-for -S \"$SIGNAL\""
 ```
 
-3. Auto-detect completion:
+**WSL / Windows Terminal:**
+```bash
+# Note: using ; instead of && so marker is written even on Codex failure
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE]; echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
+```
+
+3. Wait for completion:
+
+**tmux mode** (signal-based):
+```bash
+# Note: Requires GNU coreutils `timeout`. On macOS: `brew install coreutils` (provides `gtimeout`)
+timeout 180s tmux wait-for "$SIGNAL" && echo "Codex completed"
+```
+
+**wt/inline mode** (file polling):
 ```bash
 for i in {1..120}; do
   if grep -q "=== CODEX_DONE ===" "$CODEX_OUTPUT" 2>/dev/null; then
@@ -112,9 +134,26 @@ cat > "$REVIEW_PROMPT" << 'EOF'
 EOF
 ```
 
-3. Launch Codex and auto-detect completion:
+3. Launch Codex for review:
+
+**tmux mode** (recommended):
 ```bash
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [REVIEW_PROMPT] | codex exec -s read-only - 2>&1 | tee [CODEX_REVIEW] && echo '=== CODEX_DONE ===' >> [CODEX_REVIEW]"
+# Unique signal: PID + timestamp + random suffix to avoid collisions
+SIGNAL="codex-review-$$-$(date +%s)-$RANDOM"
+tmux split-window -h -d \
+  "cd \"$(pwd)\"; \
+   cat [REVIEW_PROMPT] | codex exec -s read-only - 2>&1 | tee [CODEX_REVIEW]; \
+   echo '=== CODEX_DONE ===' >> [CODEX_REVIEW]; \
+   tmux wait-for -S \"$SIGNAL\""
+
+# Note: Requires GNU coreutils `timeout`. On macOS: `brew install coreutils`
+timeout 180s tmux wait-for "$SIGNAL" && echo "Review completed"
+```
+
+**wt mode:**
+```bash
+# Note: using ; instead of && so marker is written even on Codex failure
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [REVIEW_PROMPT] | codex exec -s read-only - 2>&1 | tee [CODEX_REVIEW]; echo '=== CODEX_DONE ===' >> [CODEX_REVIEW]"
 
 for i in {1..120}; do
   if grep -q "=== CODEX_DONE ===" "$CODEX_REVIEW" 2>/dev/null; then
@@ -231,7 +270,7 @@ Your prompt here
 EOF
 
 # Launch in new pane (use cat | codex exec - format)
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] && echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] ; echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
 
 # Auto-detect completion (poll for marker)
 for i in {1..120}; do
@@ -250,7 +289,7 @@ CODEX_OUTPUT="$(pwd)/.codex-output.md"
 CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
 rm -f "$CODEX_OUTPUT"
 
-gnome-terminal -- bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT && echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
+gnome-terminal -- bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT ; echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
 ```
 
 ### Native Linux (xterm)
@@ -260,7 +299,7 @@ CODEX_OUTPUT="$(pwd)/.codex-output.md"
 CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
 rm -f "$CODEX_OUTPUT"
 
-xterm -e bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT && echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
+xterm -e bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT ; echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
 ```
 
 ### Codex CLI Options
@@ -391,6 +430,49 @@ Auto-iterate on review findings:
 - `review.user_confirm: never` - Auto-iterate without confirmation
 
 **Note:** `exchange.*` and `review.*` are completely independent (no inheritance).
+
+## Alternative: Persistent Collaboration with Attach Mode
+
+For ongoing collaboration with an existing Codex session, use `/collab-attach`:
+
+### Requirements
+
+- Must be inside a tmux session (`$TMUX` must be set)
+- Codex must be running in interactive mode in another pane
+
+### Usage
+
+```bash
+# Start Codex in a new pane (interactive mode)
+tmux split-window -h 'codex'
+
+# Send prompts to the existing Codex pane
+/collab-attach この機能の設計を考えて
+
+# Check status
+/collab-attach status
+
+# Capture output
+/collab-attach capture
+
+# Detach from pane (clear stored pane ID)
+/collab-attach detach
+```
+
+### When to Use Attach Mode
+
+- **Persistent context**: Codex maintains conversation history across multiple prompts
+- **Interactive exploration**: Quick back-and-forth discussions with Codex
+- **Manual control**: You control when to send prompts and can view Codex's real-time output
+
+### Differences from /collab
+
+| Feature | /collab | /collab-attach |
+|---------|---------|----------------|
+| Codex mode | exec (single prompt) | Interactive (persistent) |
+| Context | Stateless per call | Maintained across calls |
+| Pane management | Auto-creates and closes | Uses existing pane |
+| Best for | Structured workflows | Exploratory discussions |
 
 ## References
 
