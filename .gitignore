@@ -1,22 +1,11 @@
 # Codex collaboration temporary files
-# These files are generated during Claude-Codex collaboration workflow
-# and should not be committed to the repository.
+# All temporary files are stored in ./tmp/ directory
 
-# Planning output/prompt files
-.codex-plan-output.md
-.codex-plan-prompt.txt
+# Temporary directory (contains all working files)
+/tmp/
 
-# Review output/prompt files
-.codex-review-output.md
-.codex-review-prompt.txt
+# Project-internal tmux socket
+/collab.sock
 
-# Legacy/generic output files (for backward compatibility)
-.codex-output.md
-.codex-output.txt
-.codex-prompt.txt
-
-# Attach mode files (persistent Codex pane collaboration)
-.codex-pane-id
-.codex-attach-prompt.txt
-.codex-attach-capture.txt
-.codex-session-state
+# Claude Code local settings
+.claude/.settings.local.json

@@ -20,6 +20,19 @@ $ARGUMENTS
 
 ## Workflow Instructions
 
+### Step 0: Load Helper Functions
+
+Source shared helper functions at the beginning of any bash block:
+```bash
+# Source helpers (assumes running from plugin root or project root)
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+if [ -f "$HELPERS" ]; then
+  source "$HELPERS"
+fi
+```
+
+> **Note:** If helpers are not available, the bash blocks include inline fallback definitions where necessary.
+
 ### Step 1: Load Settings
 
 Check for project-specific settings:
@@ -59,9 +72,11 @@ Launch Codex based on `launch.mode` setting. Output is saved to project director
 
 **1. Prepare files (always run first):**
 ```bash
-# Output file in project directory (shared between WSL sessions)
-CODEX_OUTPUT="$(pwd)/.codex-plan-output.md"
-CODEX_PROMPT="$(pwd)/.codex-plan-prompt.txt"
+# Ensure tmp directory exists and set output file paths
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+mkdir -p "$TMP_DIR"
+CODEX_OUTPUT="$TMP_DIR/codex-plan-output.md"
+CODEX_PROMPT="$TMP_DIR/codex-plan-prompt.txt"
 rm -f "$CODEX_OUTPUT"
 
 # Write prompt to file
@@ -97,79 +112,34 @@ EOF
 If `launch.prefer_attached` is enabled (default: true) and inside tmux, check for an existing attached Codex pane:
 
 ```bash
+# Source helpers
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
+
 # PREFER_ATTACHED should be set from launch.prefer_attached setting in Step 1
 # Default: true (enabled)
 # Set PREFER_ATTACHED="false" to skip attached pane checks
 
 # Skip if not in tmux or prefer_attached is disabled
 if [ -n "$TMUX" ] && [ "${PREFER_ATTACHED:-true}" = "true" ]; then
-  PANE_ID_FILE="$(pwd)/.codex-pane-id"
+  TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+  PANE_ID_FILE="$TMP_DIR/codex-pane-id"
   ATTACHED_PANE=""
 
-  if [ -f "$PANE_ID_FILE" ]; then
-    STORED_PANE=$(cat "$PANE_ID_FILE")
-
-    # Verify pane exists and is running Codex
-    if tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx "$STORED_PANE"; then
-      # Check if pane is running Codex (node process)
-      PANE_CMD=$(tmux display-message -t "$STORED_PANE" -p '#{pane_current_command}' 2>/dev/null)
-      # Use larger scrollback (-S -2000) to find Codex banner even if scrolled
-      PANE_CONTENT=$(tmux capture-pane -t "$STORED_PANE" -p -S -2000 2>/dev/null)
-
-      if [ "$PANE_CMD" = "node" ] && echo "$PANE_CONTENT" | grep -q "│ >_ OpenAI Codex"; then
-        ATTACHED_PANE="$STORED_PANE"
-        echo "Found attached Codex pane: $ATTACHED_PANE"
-      else
-        echo "Stored pane $STORED_PANE is not running Codex, falling back to new launch"
-      fi
-    else
-      echo "Stored pane $STORED_PANE no longer exists, falling back to new launch"
-    fi
-  fi
-
-  # Auto-detect Codex pane if not found via stored ID
-  if [ -z "$ATTACHED_PANE" ]; then
-    echo "No stored pane ID or invalid, scanning for Codex panes..."
-
-    # Check if tmux list-panes works
-    PANE_LIST=$(tmux list-panes -a -F '#{pane_id}' 2>&1)
-    if [ $? -ne 0 ]; then
-      echo "Warning: Failed to list tmux panes, skipping auto-detection"
-      echo "Error: $PANE_LIST"
-    else
-      # Search all panes for Codex (node process with Codex banner)
-      CODEX_PANES=""
-      for pane in $PANE_LIST; do
-        PANE_CMD=$(tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null)
-        if [ "$PANE_CMD" = "node" ]; then
-          PANE_CONTENT=$(tmux capture-pane -t "$pane" -p -S -2000 2>/dev/null)
-          if echo "$PANE_CONTENT" | grep -q "│ >_ OpenAI Codex"; then
-            if [ -z "$CODEX_PANES" ]; then
-              CODEX_PANES="$pane"
-            else
-              CODEX_PANES="$CODEX_PANES $pane"
-            fi
-          fi
+  # Use helper function for pane detection (handles stored ID + auto-detect)
+  if type codex_find_pane &>/dev/null; then
+    ATTACHED_PANE=$(codex_find_pane "$PANE_ID_FILE")
+  else
+    # Inline fallback if helpers not available
+    if [ -f "$PANE_ID_FILE" ]; then
+      STORED_PANE=$(cat "$PANE_ID_FILE")
+      if tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx "$STORED_PANE"; then
+        PANE_CMD=$(tmux display-message -t "$STORED_PANE" -p '#{pane_current_command}' 2>/dev/null)
+        PANE_CONTENT=$(tmux capture-pane -t "$STORED_PANE" -p -S -2000 2>/dev/null)
+        if [ "$PANE_CMD" = "node" ] && echo "$PANE_CONTENT" | grep -q "│ >_ OpenAI Codex"; then
+          ATTACHED_PANE="$STORED_PANE"
+          echo "Found attached Codex pane: $ATTACHED_PANE"
         fi
-      done
-
-      # Handle detection results
-      if [ -n "$CODEX_PANES" ]; then
-        PANE_COUNT=$(echo "$CODEX_PANES" | wc -w | tr -d ' ')
-        if [ "$PANE_COUNT" -eq 1 ]; then
-          ATTACHED_PANE=$(echo "$CODEX_PANES" | tr -d ' ')
-          echo "Auto-detected Codex pane: $ATTACHED_PANE"
-          echo "$ATTACHED_PANE" > "$PANE_ID_FILE"
-          echo "Saved pane ID to $PANE_ID_FILE"
-        elif [ "$PANE_COUNT" -gt 1 ]; then
-          echo "Warning: Multiple Codex panes found ($PANE_COUNT): $CODEX_PANES"
-          ATTACHED_PANE=$(echo "$CODEX_PANES" | awk '{print $1}')
-          echo "Using first pane: $ATTACHED_PANE"
-          echo "To use a different pane, set .codex-pane-id manually or use /collab-attach"
-          echo "$ATTACHED_PANE" > "$PANE_ID_FILE"
-        fi
-      else
-        echo "No Codex pane found, will launch new instance"
       fi
     fi
   fi
@@ -179,7 +149,6 @@ if [ -n "$TMUX" ] && [ "${PREFER_ATTACHED:-true}" = "true" ]; then
   if [ -n "$ATTACHED_PANE" ]; then
     echo "Using attached Codex pane instead of launching new instance"
     # → Skip Steps 3-4, go directly to Step 3-Attached
-    # In script form: use `exit` or function return here
   fi
 fi
 ```
@@ -287,97 +256,112 @@ If an attached Codex pane was found in Step 3.0, use this flow instead of launch
 
 **1. Prepare prompt and capture state:**
 ```bash
-# Cross-platform hash function
-hash_content() {
-  if command -v md5sum &>/dev/null; then
-    md5sum | awk '{print $1}'
-  else
-    md5
-  fi
-}
+# Source helpers
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
 
-CAPTURE_FILE="$(pwd)/.codex-attach-capture.txt"
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+mkdir -p "$TMP_DIR"
+CAPTURE_FILE="$TMP_DIR/codex-attach-capture.txt"
 BEFORE_CONTENT=$(tmux capture-pane -t "$ATTACHED_PANE" -p -S -5000)
-BEFORE_HASH=$(echo "$BEFORE_CONTENT" | hash_content)
+
+# Use helper or inline fallback for hash
+if type codex_hash_content &>/dev/null; then
+  BEFORE_HASH=$(echo "$BEFORE_CONTENT" | codex_hash_content)
+else
+  BEFORE_HASH=$(echo "$BEFORE_CONTENT" | md5sum 2>/dev/null | awk '{print $1}' || md5)
+fi
 ```
 
 **2. Generate unique marker and send prompt:**
 ```bash
-MARKER_ID="$(date +%s)-$RANDOM"
-END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
+# Source helpers (if not already)
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
 
 # The prompt content (same as prepared in Step 3.1)
 PROMPT_CONTENT=$(cat "$CODEX_PROMPT")
 
-# Append marker instruction
-MARKER_INSTRUCTION="
+# Use helper or inline fallback for sending prompt
+if type codex_send_prompt &>/dev/null; then
+  END_MARKER=$(codex_send_prompt "$ATTACHED_PANE" "$PROMPT_CONTENT")
+  echo "Prompt sent to attached Codex pane: $ATTACHED_PANE"
+  echo "Completion marker: $END_MARKER"
+else
+  # Inline fallback
+  MARKER_ID="$(date +%s)-$RANDOM"
+  END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
+  TEMP_PROMPT="$TMP_DIR/codex-prompt-$$"
+  echo "${PROMPT_CONTENT}
 
-When finished, output exactly: $END_MARKER"
-
-# Create temporary file with full prompt content
-TEMP_PROMPT="/tmp/codex-prompt-$$"
-echo "${PROMPT_CONTENT}${MARKER_INSTRUCTION}" > "$TEMP_PROMPT"
-
-# Send to attached pane using load-buffer + paste-buffer for reliable multi-line input
-# This avoids issues with special characters and long prompts in send-keys
-tmux load-buffer "$TEMP_PROMPT"
-tmux paste-buffer -t "$ATTACHED_PANE"
-# Small delay to ensure paste completes before sending Enter
-sleep 0.2
-tmux send-keys -t "$ATTACHED_PANE" Enter
-rm -f "$TEMP_PROMPT"
-
-echo "Prompt sent to attached Codex pane: $ATTACHED_PANE"
-echo "Completion marker: $END_MARKER"
+When finished, output exactly: ${END_MARKER}" > "$TEMP_PROMPT"
+  tmux load-buffer "$TEMP_PROMPT"
+  tmux paste-buffer -t "$ATTACHED_PANE"
+  sleep 0.2
+  tmux send-keys -t "$ATTACHED_PANE" Enter
+  rm -f "$TEMP_PROMPT"
+  echo "Prompt sent to attached Codex pane: $ATTACHED_PANE"
+  echo "Completion marker: $END_MARKER"
+fi
 ```
 
 **3. Wait for completion (marker + idle detection):**
 ```bash
-WAIT_TIMEOUT="${WAIT_TIMEOUT:-180}"
-POLL_INTERVAL=2
-IDLE_THRESHOLD=5
+# Source helpers (if not already)
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
 
-COMPLETED=false
-IDLE_COUNT=0
-LAST_HASH="$BEFORE_HASH"
+# Use helper or inline fallback for completion detection
+if type codex_wait_completion &>/dev/null; then
+  CODEX_WAIT_TIMEOUT="${WAIT_TIMEOUT:-180}"
+  codex_wait_completion "$ATTACHED_PANE" "$END_MARKER" "$BEFORE_HASH"
+else
+  # Inline fallback
+  WAIT_TIMEOUT="${WAIT_TIMEOUT:-180}"
+  POLL_INTERVAL=2
+  IDLE_THRESHOLD=5
+  COMPLETED=false
+  IDLE_COUNT=0
+  LAST_HASH="$BEFORE_HASH"
 
-for i in $(seq 1 $((WAIT_TIMEOUT / POLL_INTERVAL))); do
-  CURRENT_OUTPUT=$(tmux capture-pane -t "$ATTACHED_PANE" -p -S -5000)
-  CURRENT_HASH=$(echo "$CURRENT_OUTPUT" | hash_content)
-
-  # Check for completion marker
-  if echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
-    echo "Codex response completed (marker found)"
-    COMPLETED=true
-    break
-  fi
-
-  # Hash-based idle detection (fallback)
-  if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
-    IDLE_COUNT=$((IDLE_COUNT + 1))
-    if [ "$IDLE_COUNT" -ge "$IDLE_THRESHOLD" ]; then
-      if echo "$CURRENT_OUTPUT" | tail -3 | grep -qE '^>\s*$|^codex>\s*$|^\[codex\]'; then
-        echo "Codex appears idle (marker not found, using idle detection)"
-        COMPLETED=true
-        break
-      fi
+  for i in $(seq 1 $((WAIT_TIMEOUT / POLL_INTERVAL))); do
+    CURRENT_OUTPUT=$(tmux capture-pane -t "$ATTACHED_PANE" -p -S -5000)
+    CURRENT_HASH=$(echo "$CURRENT_OUTPUT" | md5sum 2>/dev/null | awk '{print $1}' || md5)
+    if echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
+      echo "Codex response completed (marker found)"
+      COMPLETED=true
+      break
     fi
-  else
-    IDLE_COUNT=0
-    LAST_HASH="$CURRENT_HASH"
-  fi
-
-  sleep $POLL_INTERVAL
-done
-
-if [ "$COMPLETED" = false ]; then
-  echo "Warning: Timeout - use '/collab-attach capture' to check output"
+    if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
+      IDLE_COUNT=$((IDLE_COUNT + 1))
+      if [ "$IDLE_COUNT" -ge "$IDLE_THRESHOLD" ]; then
+        if echo "$CURRENT_OUTPUT" | tail -3 | grep -qE '^>\s*$|^codex>\s*$|^\[codex\]'; then
+          echo "Codex appears idle (marker not found, using idle detection)"
+          COMPLETED=true
+          break
+        fi
+      fi
+    else
+      IDLE_COUNT=0
+      LAST_HASH="$CURRENT_HASH"
+    fi
+    sleep $POLL_INTERVAL
+  done
+  [ "$COMPLETED" = false ] && echo "Warning: Timeout - use '/collab-attach capture' to check output"
 fi
 ```
 
 **4. Capture output to file:**
 ```bash
-tmux capture-pane -t "$ATTACHED_PANE" -p -S -5000 > "$CAPTURE_FILE"
+# Source helpers (if not already)
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+if type codex_capture_output &>/dev/null; then
+  codex_capture_output "$ATTACHED_PANE" "$CAPTURE_FILE"
+else
+  tmux capture-pane -t "$ATTACHED_PANE" -p -S -5000 > "$CAPTURE_FILE"
+fi
 # Also save to CODEX_OUTPUT for compatibility with Step 5
 cp "$CAPTURE_FILE" "$CODEX_OUTPUT"
 ```
@@ -508,17 +492,18 @@ Launch another Codex session for review:
 **0. Stage changes for Codex visibility (important!):**
 ```bash
 git add -A
-git reset -- .codex-*.md .codex-*.txt 2>/dev/null || true
 ```
 > **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method. Some tools use `git ls-files` (tracked files only) or respect `.gitignore`. Staging guarantees consistency.
 > This is staging only, not a commit. Run `git reset` after review to unstage if needed.
 >
-> **Note:** The `git reset` line explicitly unstages temporary files (`.codex-*.md`, `.codex-*.txt`) to ensure they are not included in the review, even if the user's project doesn't have a `.gitignore` for these files.
+> **Note:** Temporary files are stored in `./tmp/` directory which is excluded by `.gitignore`, so they won't be included in the review.
 
 **1. Prepare files:**
 ```bash
-CODEX_REVIEW="$(pwd)/.codex-review-output.md"
-REVIEW_PROMPT="$(pwd)/.codex-review-prompt.txt"
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+mkdir -p "$TMP_DIR"
+CODEX_REVIEW="$TMP_DIR/codex-review-output.md"
+REVIEW_PROMPT="$TMP_DIR/codex-review-prompt.txt"
 rm -f "$CODEX_REVIEW"
 
 cat > "$REVIEW_PROMPT" << 'EOF'
@@ -639,7 +624,7 @@ Report completion to user with summary
    - `on_important`: Confirm only for high-severity findings
 
 5. **Re-request review:**
-   - Stage changes with `git add -A && git reset -- .codex-*.md .codex-*.txt 2>/dev/null || true`
+   - Stage changes with `git add -A`
    - Launch Codex with updated diff
    - Return to Step 8
 
@@ -655,8 +640,9 @@ Present issues to user and discuss next steps
 
 Remove temporary files:
 ```bash
-rm -f "$(pwd)/.codex-plan-output.md" "$(pwd)/.codex-plan-prompt.txt"
-rm -f "$(pwd)/.codex-review-output.md" "$(pwd)/.codex-review-prompt.txt"
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+rm -f "$TMP_DIR/codex-plan-output.md" "$TMP_DIR/codex-plan-prompt.txt"
+rm -f "$TMP_DIR/codex-review-output.md" "$TMP_DIR/codex-review-prompt.txt"
 ```
 
 ## Error Handling
@@ -699,11 +685,11 @@ If timeout (`codex.wait_timeout`, default 180s) without completion marker:
   - **wt**: Windows Terminal new pane. May steal focus (GitHub issue #17460). Uses file polling for completion detection.
   - **inline**: Runs in current terminal. Blocks until completion.
   - **auto** (default): If inside tmux session → tmux, else → wt → inline.
-- **Attached pane priority**: When `launch.prefer_attached: true` (default), `/collab` first checks for `.codex-pane-id`. If a valid Codex pane exists, prompts are sent there instead of launching a new instance. This preserves conversation context from `/collab-attach` sessions. Set `launch.prefer_attached: false` to always launch new instances.
+- **Attached pane priority**: When `launch.prefer_attached: true` (default), `/collab` first checks for `tmp/codex-pane-id`. If a valid Codex pane exists, prompts are sent there instead of launching a new instance. This preserves conversation context from `/collab-attach` sessions. Set `launch.prefer_attached: false` to always launch new instances.
 - **Completion detection**:
   - **tmux mode**: Uses `tmux wait-for` signal for instant detection (no polling). The `timeout` command wraps it for timeout support.
   - **wt/inline mode**: Polls output file for `=== CODEX_DONE ===` marker every 1 second.
-- Output files are saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are explicitly unstaged after `git add -A` to ensure they don't appear in review diffs
+- Output files are saved in project's `tmp/` directory to share between WSL sessions. This directory is excluded by `.gitignore` so temporary files don't appear in diffs.
 - Completion marker `=== CODEX_DONE ===` is appended to output file (kept for compatibility and debugging)
 - Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)
 - Each Codex call is independent (no session state between calls)
