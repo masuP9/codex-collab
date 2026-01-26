@@ -1,4 +1,5 @@
 ---
+name: collab-codex
 description: Start a collaborative task with Codex (Codex plans/reviews, Claude implements)
 argument-hint: [task description]
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
