@@ -239,6 +239,15 @@ codex_send_prompt() {
     return 1
   fi
 
+  # Check if pane is ready for input (not in copy mode, not dead)
+  local pane_mode
+  pane_mode=$(tmux display-message -t "$pane_id" -p '#{pane_in_mode}' 2>/dev/null)
+  if [ "$pane_mode" = "1" ]; then
+    # Pane is in copy mode, try to exit
+    tmux send-keys -t "$pane_id" q 2>/dev/null
+    sleep 0.2
+  fi
+
   # Clear any existing input in the pane first
   codex_clear_input "$pane_id" 2>/dev/null || true
 
@@ -254,9 +263,14 @@ When finished, output exactly: ${end_marker}"
   local temp_prompt="$(pwd)/${CODEX_TMP_DIR:-tmp}/codex-prompt-$$"
   echo "$full_prompt" > "$temp_prompt"
 
-  # Send using load-buffer + paste-buffer for reliable multi-line input
-  tmux load-buffer "$temp_prompt"
-  tmux paste-buffer -t "$pane_id"
+  # Use named buffer to avoid conflicts with default buffer
+  # Delete any existing buffer with this name first
+  local buffer_name="codex-prompt-$$"
+  tmux delete-buffer -b "$buffer_name" 2>/dev/null || true
+
+  # Send using named buffer for reliable multi-line input
+  tmux load-buffer -b "$buffer_name" "$temp_prompt"
+  tmux paste-buffer -b "$buffer_name" -t "$pane_id" -d
 
   # Delay to ensure paste completes before sending Enter
   # Longer delay (1s) needed for large prompts to fully paste
@@ -307,6 +321,15 @@ codex_send_prompt_file() {
     return 1
   fi
 
+  # Check if pane is ready for input (not in copy mode, not dead)
+  local pane_mode
+  pane_mode=$(tmux display-message -t "$pane_id" -p '#{pane_in_mode}' 2>/dev/null)
+  if [ "$pane_mode" = "1" ]; then
+    # Pane is in copy mode, try to exit
+    tmux send-keys -t "$pane_id" q 2>/dev/null
+    sleep 0.2
+  fi
+
   # Clear any existing input in the pane first
   codex_clear_input "$pane_id" 2>/dev/null || true
 
@@ -338,9 +361,15 @@ ${end_marker}"
   local temp_prompt="$(pwd)/${CODEX_TMP_DIR:-tmp}/codex-prompt-file-$$"
   echo "$prompt" > "$temp_prompt"
 
-  # Send using load-buffer + paste-buffer
-  tmux load-buffer "$temp_prompt"
-  tmux paste-buffer -t "$pane_id"
+  # Use named buffer to avoid conflicts with default buffer
+  # Delete any existing buffer with this name first
+  local buffer_name="codex-file-$$"
+  tmux delete-buffer -b "$buffer_name" 2>/dev/null || true
+
+  # Send using named buffer for reliable multi-line input
+  # -d flag deletes buffer after pasting
+  tmux load-buffer -b "$buffer_name" "$temp_prompt"
+  tmux paste-buffer -b "$buffer_name" -t "$pane_id" -d
 
   # Short delay is enough for this small prompt
   sleep 0.5
