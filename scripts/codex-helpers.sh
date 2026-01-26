@@ -91,23 +91,28 @@ codex_verify_pane() {
     return 1
   fi
 
-  # Check if pane exists
-  if ! tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx "$pane_id"; then
+  # Check if pane exists (within current session)
+  if ! tmux list-panes -s -F '#{pane_id}' 2>/dev/null | grep -qx "$pane_id"; then
     echo "error:pane_not_found"
     return 1
   fi
 
-  # Check if pane is running Codex (node process)
+  # Check if pane is running Codex
   local pane_cmd
   pane_cmd=$(tmux display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null)
 
-  # Use larger scrollback (-S -2000) to find Codex banner even if scrolled
-  local pane_content
-  pane_content=$(tmux capture-pane -t "$pane_id" -p -S -2000 2>/dev/null)
+  # Priority 1: Native codex command (most reliable)
+  if [ "$pane_cmd" = "codex" ]; then
+    echo "valid"
+    return 0
+  fi
 
-  # Codex runs as node process with specific patterns
-  # Check for: banner, prompt character, or typical output patterns
+  # Priority 2: Node process with Codex patterns (legacy/npm run)
   if [ "$pane_cmd" = "node" ]; then
+    # Use larger scrollback (-S -2000) to find Codex banner even if scrolled
+    local pane_content
+    pane_content=$(tmux capture-pane -t "$pane_id" -p -S -2000 2>/dev/null)
+
     # Primary: Codex banner (may scroll out of view)
     if echo "$pane_content" | grep -q "│ >_ OpenAI Codex"; then
       echo "valid"
@@ -118,12 +123,6 @@ codex_verify_pane() {
       echo "valid"
       return 0
     fi
-  fi
-
-  # Also check for direct codex command
-  if echo "$pane_cmd" | grep -qi "codex"; then
-    echo "valid"
-    return 0
   fi
 
   echo "error:not_codex_pane"
@@ -157,9 +156,9 @@ codex_find_pane() {
     echo "No stored pane ID, scanning for Codex panes..." >&2
   fi
 
-  # Method 2: Auto-detect Codex pane
+  # Method 2: Auto-detect Codex pane (within current session only)
   local pane_list
-  pane_list=$(tmux list-panes -a -F '#{pane_id}' 2>&1)
+  pane_list=$(tmux list-panes -s -F '#{pane_id}' 2>&1)
   if [ $? -ne 0 ]; then
     echo "Warning: Failed to list tmux panes" >&2
     echo "Error: $pane_list" >&2
@@ -173,7 +172,15 @@ codex_find_pane() {
     local pane_cmd
     pane_cmd=$(tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null)
 
-    if [ "$pane_cmd" = "node" ]; then
+    # Priority 1: Native codex command (most reliable)
+    if [ "$pane_cmd" = "codex" ]; then
+      if [ -z "$codex_panes" ]; then
+        codex_panes="$pane"
+      else
+        codex_panes="$codex_panes $pane"
+      fi
+    # Priority 2: Node process with Codex patterns (legacy/npm run)
+    elif [ "$pane_cmd" = "node" ]; then
       local pane_content
       pane_content=$(tmux capture-pane -t "$pane" -p -S -2000 2>/dev/null)
       # Check for: banner, prompt character, or typical output patterns
@@ -184,12 +191,6 @@ codex_find_pane() {
         else
           codex_panes="$codex_panes $pane"
         fi
-      fi
-    elif echo "$pane_cmd" | grep -qi "codex"; then
-      if [ -z "$codex_panes" ]; then
-        codex_panes="$pane"
-      else
-        codex_panes="$codex_panes $pane"
       fi
     fi
   done <<< "$pane_list"
