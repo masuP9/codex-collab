@@ -39,6 +39,16 @@ _CODEX_HELPERS_LOADED=1
 : "${CODEX_SIGNAL_CHANNEL:=codex-done}"
 
 # ==============================================================================
+# Debug Logging
+# ==============================================================================
+
+# Debug logging (enabled with CODEX_DEBUG=1)
+# Usage: codex_debug "message"
+codex_debug() {
+  [ "${CODEX_DEBUG:-}" = "1" ] && echo "[codex-debug] $*" >&2
+}
+
+# ==============================================================================
 # Directory Setup
 # ==============================================================================
 
@@ -87,44 +97,68 @@ codex_verify_pane() {
   local pane_id="$1"
 
   if [ -z "$pane_id" ]; then
+    codex_debug "verify_pane: empty pane_id"
     echo "error:empty_pane_id"
     return 1
   fi
 
-  # Check if pane exists (within current session)
-  if ! tmux list-panes -s -F '#{pane_id}' 2>/dev/null | grep -qx "$pane_id"; then
+  # Validate pane ID format (should be %N where N is a number)
+  if ! echo "$pane_id" | grep -qE '^%[0-9]+$'; then
+    codex_debug "verify_pane: invalid pane_id format: $pane_id"
+    echo "error:invalid_pane_id_format"
+    return 1
+  fi
+
+  # Use codex_tmux_cmd for socket support
+  local tmux_cmd
+  tmux_cmd=$(codex_tmux_cmd)
+  codex_debug "verify_pane: checking pane $pane_id with: $tmux_cmd"
+
+  # Check if pane exists using direct query (more reliable than list-panes + grep)
+  # display-message -t returns empty string for non-existent panes
+  local queried_pane
+  queried_pane=$($tmux_cmd display-message -t "$pane_id" -p '#{pane_id}' 2>/dev/null)
+  if [ -z "$queried_pane" ] || [ "$queried_pane" != "$pane_id" ]; then
+    codex_debug "verify_pane: pane $pane_id not found (queried: '$queried_pane')"
     echo "error:pane_not_found"
     return 1
   fi
 
   # Check if pane is running Codex
   local pane_cmd
-  pane_cmd=$(tmux display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null)
+  pane_cmd=$($tmux_cmd display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null)
+  codex_debug "verify_pane: pane $pane_id running: $pane_cmd"
 
   # Priority 1: Native codex command (most reliable)
   if [ "$pane_cmd" = "codex" ]; then
+    codex_debug "verify_pane: pane $pane_id is valid (codex command)"
     echo "valid"
     return 0
   fi
 
   # Priority 2: Node process with Codex patterns (legacy/npm run)
   if [ "$pane_cmd" = "node" ]; then
+    codex_debug "verify_pane: pane $pane_id running node, checking content patterns"
     # Use larger scrollback (-S -2000) to find Codex banner even if scrolled
     local pane_content
-    pane_content=$(tmux capture-pane -t "$pane_id" -p -S -2000 2>/dev/null)
+    pane_content=$($tmux_cmd capture-pane -t "$pane_id" -p -S -2000 2>/dev/null)
 
     # Primary: Codex banner (may scroll out of view)
     if echo "$pane_content" | grep -q "│ >_ OpenAI Codex"; then
+      codex_debug "verify_pane: pane $pane_id is valid (Codex banner found)"
       echo "valid"
       return 0
     fi
     # Secondary: Codex prompt character or typical output
     if echo "$pane_content" | grep -qE "^› |Worked for [0-9]+|You approved codex"; then
+      codex_debug "verify_pane: pane $pane_id is valid (Codex prompt/output pattern)"
       echo "valid"
       return 0
     fi
+    codex_debug "verify_pane: pane $pane_id is node but no Codex patterns found"
   fi
 
+  codex_debug "verify_pane: pane $pane_id is not a Codex pane"
   echo "error:not_codex_pane"
   return 1
 }
@@ -137,10 +171,16 @@ codex_find_pane() {
   local pane_id_file="${1:-$(codex_tmp_path codex-pane-id)}"
   local found_pane=""
 
+  # Use codex_tmux_cmd for socket support
+  local tmux_cmd
+  tmux_cmd=$(codex_tmux_cmd)
+  codex_debug "find_pane: using tmux command: $tmux_cmd"
+
   # Method 1: Check stored pane ID
   if [ -f "$pane_id_file" ]; then
     local stored_pane
     stored_pane=$(cat "$pane_id_file")
+    codex_debug "find_pane: checking stored pane ID: $stored_pane"
 
     local verify_result
     verify_result=$(codex_verify_pane "$stored_pane")
@@ -150,30 +190,36 @@ codex_find_pane() {
       echo "Found Codex pane from stored ID: $stored_pane" >&2
       return 0
     else
+      codex_debug "find_pane: stored pane invalid: $verify_result"
       echo "Stored pane $stored_pane is invalid ($verify_result), scanning for Codex panes..." >&2
     fi
   else
+    codex_debug "find_pane: no stored pane ID file at $pane_id_file"
     echo "No stored pane ID, scanning for Codex panes..." >&2
   fi
 
   # Method 2: Auto-detect Codex pane (within current session only)
   local pane_list
-  pane_list=$(tmux list-panes -s -F '#{pane_id}' 2>&1)
+  pane_list=$($tmux_cmd list-panes -s -F '#{pane_id}' 2>&1)
   if [ $? -ne 0 ]; then
+    codex_debug "find_pane: failed to list panes: $pane_list"
     echo "Warning: Failed to list tmux panes" >&2
     echo "Error: $pane_list" >&2
     return 1
   fi
+  codex_debug "find_pane: scanning panes: $(echo "$pane_list" | tr '\n' ' ')"
 
   # Search all panes for Codex (use while read for reliable line parsing)
   local codex_panes=""
   while IFS= read -r pane; do
     [ -z "$pane" ] && continue
     local pane_cmd
-    pane_cmd=$(tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null)
+    pane_cmd=$($tmux_cmd display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null)
+    codex_debug "find_pane: pane $pane running: $pane_cmd"
 
     # Priority 1: Native codex command (most reliable)
     if [ "$pane_cmd" = "codex" ]; then
+      codex_debug "find_pane: found codex pane: $pane"
       if [ -z "$codex_panes" ]; then
         codex_panes="$pane"
       else
@@ -182,10 +228,11 @@ codex_find_pane() {
     # Priority 2: Node process with Codex patterns (legacy/npm run)
     elif [ "$pane_cmd" = "node" ]; then
       local pane_content
-      pane_content=$(tmux capture-pane -t "$pane" -p -S -2000 2>/dev/null)
+      pane_content=$($tmux_cmd capture-pane -t "$pane" -p -S -2000 2>/dev/null)
       # Check for: banner, prompt character, or typical output patterns
       if echo "$pane_content" | grep -q "│ >_ OpenAI Codex" || \
          echo "$pane_content" | grep -qE "^› |Worked for [0-9]+|You approved codex"; then
+        codex_debug "find_pane: found codex (node) pane: $pane"
         if [ -z "$codex_panes" ]; then
           codex_panes="$pane"
         else
@@ -199,6 +246,7 @@ codex_find_pane() {
   if [ -n "$codex_panes" ]; then
     local pane_count
     pane_count=$(echo "$codex_panes" | wc -w | tr -d ' ')
+    codex_debug "find_pane: found $pane_count codex pane(s): $codex_panes"
 
     if [ "$pane_count" -eq 1 ]; then
       found_pane=$(echo "$codex_panes" | tr -d ' ')
@@ -212,11 +260,13 @@ codex_find_pane() {
 
     # Save pane ID for future use
     echo "$found_pane" > "$pane_id_file"
+    codex_debug "find_pane: saved pane ID to $pane_id_file"
     echo "Saved pane ID to $pane_id_file" >&2
     echo "$found_pane"
     return 0
   fi
 
+  codex_debug "find_pane: no Codex pane found in any session pane"
   echo "No Codex pane found" >&2
   return 1
 }
