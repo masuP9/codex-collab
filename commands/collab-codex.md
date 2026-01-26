@@ -148,16 +148,44 @@ if [ -n "$TMUX" ] && [ "${PREFER_ATTACHED:-true}" = "true" ]; then
     ATTACHED_PANE=$(codex_find_pane "$PANE_ID_FILE")
   else
     # Inline fallback if helpers not available
+    # Method 1: Check stored pane ID
     if [ -f "$PANE_ID_FILE" ]; then
       STORED_PANE=$(cat "$PANE_ID_FILE")
-      if tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx "$STORED_PANE"; then
+      if tmux list-panes -s -F '#{pane_id}' 2>/dev/null | grep -qx "$STORED_PANE"; then
         PANE_CMD=$(tmux display-message -t "$STORED_PANE" -p '#{pane_current_command}' 2>/dev/null)
-        PANE_CONTENT=$(tmux capture-pane -t "$STORED_PANE" -p -S -2000 2>/dev/null)
-        if [ "$PANE_CMD" = "node" ] && echo "$PANE_CONTENT" | grep -q "│ >_ OpenAI Codex"; then
+        if [ "$PANE_CMD" = "codex" ]; then
           ATTACHED_PANE="$STORED_PANE"
-          echo "Found attached Codex pane: $ATTACHED_PANE"
+          echo "Found attached Codex pane from stored ID: $ATTACHED_PANE"
+        elif [ "$PANE_CMD" = "node" ]; then
+          PANE_CONTENT=$(tmux capture-pane -t "$STORED_PANE" -p -S -2000 2>/dev/null)
+          if echo "$PANE_CONTENT" | grep -q "│ >_ OpenAI Codex"; then
+            ATTACHED_PANE="$STORED_PANE"
+            echo "Found attached Codex pane from stored ID: $ATTACHED_PANE"
+          fi
         fi
       fi
+    fi
+
+    # Method 2: Auto-detect Codex pane if not found
+    if [ -z "$ATTACHED_PANE" ]; then
+      echo "Scanning for Codex panes in current session..."
+      for pane in $(tmux list-panes -s -F '#{pane_id}' 2>/dev/null); do
+        PANE_CMD=$(tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null)
+        if [ "$PANE_CMD" = "codex" ]; then
+          ATTACHED_PANE="$pane"
+          echo "Auto-detected Codex pane: $ATTACHED_PANE"
+          echo "$ATTACHED_PANE" > "$PANE_ID_FILE"
+          break
+        elif [ "$PANE_CMD" = "node" ]; then
+          PANE_CONTENT=$(tmux capture-pane -t "$pane" -p -S -2000 2>/dev/null)
+          if echo "$PANE_CONTENT" | grep -qE "│ >_ OpenAI Codex|^› |Worked for [0-9]+"; then
+            ATTACHED_PANE="$pane"
+            echo "Auto-detected Codex pane: $ATTACHED_PANE"
+            echo "$ATTACHED_PANE" > "$PANE_ID_FILE"
+            break
+          fi
+        fi
+      done
     fi
   fi
 
