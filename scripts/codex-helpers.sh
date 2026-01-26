@@ -222,6 +222,39 @@ codex_find_pane() {
 }
 
 # ==============================================================================
+# Locking Functions (for concurrent access prevention)
+# ==============================================================================
+
+# Acquire a lock for Codex communication
+# Usage: codex_acquire_lock [lock_name]
+# Returns: 0 if lock acquired, 1 if already locked
+# Note: Lock is released automatically when the calling shell exits
+codex_acquire_lock() {
+  local lock_name="${1:-codex-send}"
+  local lock_file="${CODEX_TMP_DIR:-./tmp}/${lock_name}.lock"
+
+  codex_ensure_tmp_dir > /dev/null
+
+  # Open lock file on fd 9
+  exec 9>"$lock_file"
+
+  # Try to acquire exclusive lock (non-blocking)
+  if ! flock -n 9; then
+    echo "Error: Another send operation is in progress" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+# Release the lock (usually automatic when shell exits)
+# Usage: codex_release_lock
+codex_release_lock() {
+  # Close fd 9 to release the lock
+  exec 9>&- 2>/dev/null || true
+}
+
+# ==============================================================================
 # Prompt Sending Functions
 # ==============================================================================
 
@@ -272,9 +305,19 @@ When finished, output exactly: ${end_marker}"
   tmux load-buffer -b "$buffer_name" "$temp_prompt"
   tmux paste-buffer -b "$buffer_name" -t "$pane_id" -d
 
-  # Delay to ensure paste completes before sending Enter
-  # Longer delay (1s) needed for large prompts to fully paste
-  sleep 1
+  # Wait for paste to complete by checking if prompt tail appears in pane
+  # This is more reliable than a fixed sleep
+  local tail_check="${full_prompt: -32}"  # Last 32 chars of prompt
+  local paste_timeout=40  # Longer timeout for potentially large prompts
+  local tail_out=""
+  for _ in $(seq 1 $paste_timeout); do
+    tail_out=$(tmux capture-pane -t "$pane_id" -p -S -5 2>/dev/null)
+    if echo "$tail_out" | grep -qF "$tail_check"; then
+      break
+    fi
+    sleep 0.05
+  done
+
   tmux send-keys -t "$pane_id" Enter
 
   rm -f "$temp_prompt"
@@ -371,8 +414,19 @@ ${end_marker}"
   tmux load-buffer -b "$buffer_name" "$temp_prompt"
   tmux paste-buffer -b "$buffer_name" -t "$pane_id" -d
 
-  # Short delay is enough for this small prompt
-  sleep 0.5
+  # Wait for paste to complete by checking if prompt tail appears in pane
+  # This is more reliable than a fixed sleep
+  local tail_check="${prompt: -32}"  # Last 32 chars of prompt
+  local paste_timeout=20
+  local tail_out=""
+  for _ in $(seq 1 $paste_timeout); do
+    tail_out=$(tmux capture-pane -t "$pane_id" -p -S -5 2>/dev/null)
+    if echo "$tail_out" | grep -qF "$tail_check"; then
+      break
+    fi
+    sleep 0.05
+  done
+
   tmux send-keys -t "$pane_id" Enter
 
   rm -f "$temp_prompt"
