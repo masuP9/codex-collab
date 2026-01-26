@@ -1,4 +1,5 @@
 ---
+name: collab-codex-attach
 description: Attach to an existing Codex pane for persistent collaboration
 argument-hint: [prompt to send to Codex | status | capture | detach]
 allowed-tools: Read, Write, Edit, Bash, AskUserQuestion
