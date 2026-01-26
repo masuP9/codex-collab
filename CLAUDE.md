@@ -55,7 +55,10 @@ HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 - `codex_find_pane()` - Codexペイン検出
 - `codex_verify_pane()` - ペインの有効性検証
 - `codex_send_prompt()` - プロンプト送信
+- `codex_send_prompt_file()` - ファイル参照によるプロンプト送信（長いプロンプト向け）
 - `codex_wait_completion()` - 完了待機
 - `codex_capture_output()` - 出力キャプチャ
 - `codex_check_tmux()` - tmuxセッション確認
 - `codex_generate_signal()` - ユニークシグナル生成
+- `codex_acquire_lock()` - 排他ロック取得（競合防止）
+- `codex_release_lock()` - ロック解放

@@ -58,6 +58,8 @@ codex-collab/
 - `codex_wait_completion()` - マーカー + アイドル検出による完了待機
 - `codex_capture_output()` - ペイン出力のキャプチャ
 - `codex_check_tmux()` - tmuxセッション確認
+- `codex_acquire_lock()` - 排他ロック取得（同時送信の競合防止）
+- `codex_release_lock()` - ロック解放
 
 **軽量メタデータ抽出:**
 - `codex_extract_metadata()` - 応答末尾のYAMLブロックを抽出
