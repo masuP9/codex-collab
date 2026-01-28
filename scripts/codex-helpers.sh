@@ -124,6 +124,17 @@ codex_verify_pane() {
     return 1
   fi
 
+  # CRITICAL: Verify pane belongs to current session
+  # display-message -t can access panes from ANY session, so we must explicitly check
+  local current_session pane_session
+  current_session=$($tmux_cmd display-message -p '#{session_id}' 2>/dev/null)
+  pane_session=$($tmux_cmd display-message -t "$pane_id" -p '#{session_id}' 2>/dev/null)
+  if [ "$pane_session" != "$current_session" ]; then
+    codex_debug "verify_pane: pane $pane_id belongs to different session (pane: $pane_session, current: $current_session)"
+    echo "error:wrong_session"
+    return 1
+  fi
+
   # Check if pane is running Codex
   local pane_cmd
   pane_cmd=$($tmux_cmd display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null)
