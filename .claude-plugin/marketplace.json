@@ -7,7 +7,11 @@
     {
       "name": "codex-collab",
       "source": "./",
-      "description": "Claude Code と OpenAI Codex CLI の協調タスク実行プラグイン"
+      "description": "Claude Code と OpenAI Codex CLI の協調タスク実行プラグイン",
+      "version": "0.11.2",
+      "author": {
+        "name": "masuP9"
+      }
     }
   ]
 }
