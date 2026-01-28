@@ -1,6 +1,6 @@
 {
   "name": "codex-collab",
-  "version": "0.11.2",
+  "version": "0.12.0",
   "description": "Claude Code と OpenAI Codex CLI の協調タスク実行プラグイン",
   "author": {
     "name": "masuP9"
