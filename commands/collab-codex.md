@@ -61,13 +61,30 @@ Check for project-specific settings:
 
 ### Step 2: Analyze Task
 
-Before requesting a plan from Codex:
+**Before starting, create a task to track progress:**
+
+Use TaskCreate:
+- subject: "Analyze task and gather context"
+- description: "Load settings, identify affected files, prepare context for Codex"
+- activeForm: "Analyzing task"
+
+Then use TaskUpdate to set status to `in_progress`.
+
+**Perform analysis:**
 1. Identify the core objective from the task description
 2. List potentially affected files
 3. Gather relevant context by reading key files
 4. Prepare a summary for Codex
 
 ### Step 3: Request Plan from Codex
+
+**Task transition:**
+1. Mark "Analyze task and gather context" as `completed`
+2. Use TaskCreate:
+   - subject: "Get implementation plan from Codex"
+   - description: "Request plan, wait for completion, process response"
+   - activeForm: "Getting plan from Codex"
+3. Use TaskUpdate to set status to `in_progress`
 
 Launch Codex based on `launch.mode` setting. Output is saved to project directory for sharing between sessions.
 
@@ -473,6 +490,14 @@ fi
 
 ### Step 5: Read and Process Response
 
+**Task transition:**
+1. Mark "Get implementation plan from Codex" as `completed`
+2. Use TaskCreate:
+   - subject: "Review and approve plan"
+   - description: "Validate plan completeness, present to user for approval"
+   - activeForm: "Reviewing plan"
+3. Use TaskUpdate to set status to `in_progress`
+
 Once completion is detected:
 
 1. Read the output file: `cat "$CODEX_OUTPUT"`
@@ -536,12 +561,28 @@ Please respond with next_action: stop when exchange is complete.
 
 ### Step 6: Implement
 
+**Task transition:**
+1. Mark "Review and approve plan" as `completed`
+2. Use TaskCreate:
+   - subject: "Implement changes"
+   - description: "Execute plan step by step, track modifications"
+   - activeForm: "Implementing changes"
+3. Use TaskUpdate to set status to `in_progress`
+
 Execute the plan step by step:
 1. Make changes as specified
 2. Track all modifications
 3. Prepare diff summary for review
 
 ### Step 7: Request Review from Codex (New Pane)
+
+**Task transition:**
+1. Mark "Implement changes" as `completed`
+2. Use TaskCreate:
+   - subject: "Request review from Codex"
+   - description: "Stage changes, request review, process feedback"
+   - activeForm: "Getting review from Codex"
+3. Use TaskUpdate to set status to `in_progress`
 
 Launch another Codex session for review:
 
@@ -708,6 +749,10 @@ Present issues to user and discuss next steps
 
 ### Step 9: Cleanup
 
+**Task transition:**
+1. Mark "Request review from Codex" as `completed`
+2. Report completion to user
+
 Remove temporary files:
 ```bash
 TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
@@ -768,3 +813,32 @@ If timeout (`codex.wait_timeout`, default 180s) without completion marker:
 - **Review iteration**: Enabled by default (`review.enabled: true`). Max iterations default is 5 (higher than exchange because goal is clear and diff is small).
 - **Independent settings**: `exchange.*` and `review.*` are completely independent (no inheritance). Each can be configured separately.
 - **Timeout configuration**: `codex.wait_timeout` (default: 180s, max: 600s) controls how long to wait for Codex. Set Bash tool's `timeout` parameter to `min(wait_timeout + 60, 600) * 1000` milliseconds.
+
+## Compact Recovery
+
+If you've been compacted during this workflow:
+
+1. Run `TaskList` to see current progress
+2. Find the task with status `in_progress`
+3. Read `tmp/codex-pane-id` if Codex pane was attached
+4. Resume from the current step
+
+**Task to Step mapping:**
+| Task | Resume at |
+|------|-----------|
+| "Analyze task and gather context" | Step 2 |
+| "Get implementation plan from Codex" | Step 3 |
+| "Review and approve plan" | Step 5 |
+| "Implement changes" | Step 6 |
+| "Request review from Codex" | Step 7 |
+
+**Recovery example:**
+```
+TaskList shows:
+- [completed] Analyze task and gather context
+- [in_progress] Get implementation plan from Codex
+
+→ Resume at Step 3: check tmp/codex-plan-output.md for Codex response
+→ If output exists with completion marker → proceed to Step 5
+→ If no output → re-run Codex request
+```

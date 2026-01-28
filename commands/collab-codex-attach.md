@@ -85,10 +85,10 @@ CODEX_PANE=""
 if type codex_find_pane &>/dev/null; then
   CODEX_PANE=$(codex_find_pane "$PANE_ID_FILE")
 else
-  # Inline fallback: Check stored pane ID first
+  # Inline fallback: Check stored pane ID first (current session only)
   if [ -f "$PANE_ID_FILE" ]; then
     STORED_PANE_ID=$(cat "$PANE_ID_FILE")
-    PANE_INFO=$(tmux list-panes -a -F '#{pane_id} #{pane_current_command}' | grep "^${STORED_PANE_ID} ")
+    PANE_INFO=$(tmux list-panes -s -F '#{pane_id} #{pane_current_command}' | grep "^${STORED_PANE_ID} ")
     if [ -n "$PANE_INFO" ]; then
       PANE_CMD=$(echo "$PANE_INFO" | awk '{print $2}')
       if echo "$PANE_CMD" | grep -qi "codex"; then
@@ -98,9 +98,9 @@ else
     fi
   fi
 
-  # Fallback: Search by command
+  # Fallback: Search by command (current session only)
   if [ -z "$CODEX_PANE" ]; then
-    CODEX_MATCHES=$(tmux list-panes -a -F '#{pane_id} #{pane_current_command}' | grep -i codex)
+    CODEX_MATCHES=$(tmux list-panes -s -F '#{pane_id} #{pane_current_command}' | grep -i codex)
     MATCH_COUNT=$(echo "$CODEX_MATCHES" | grep -c . || echo 0)
     if [ "$MATCH_COUNT" -ge 1 ]; then
       CODEX_PANE=$(echo "$CODEX_MATCHES" | head -1 | awk '{print $1}')
@@ -108,9 +108,9 @@ else
     fi
   fi
 
-  # Fallback: Search by content
+  # Fallback: Search by content (current session only)
   if [ -z "$CODEX_PANE" ]; then
-    for pane in $(tmux list-panes -a -F '#{pane_id}'); do
+    for pane in $(tmux list-panes -s -F '#{pane_id}'); do
       PANE_CONTENT=$(tmux capture-pane -t "$pane" -p -S -50 2>/dev/null)
       if echo "$PANE_CONTENT" | grep -q "│ >_ OpenAI Codex"; then
         CODEX_PANE="$pane"
