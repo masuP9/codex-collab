@@ -25,6 +25,9 @@ Source shared helper functions and check for special commands.
 **Important:** Each special command MUST exit after handling to prevent fallthrough.
 
 ```bash
+# Mark skill context for PreToolUse hook detection
+export CODEX_SKILL_CONTEXT=1
+
 # Source helpers
 HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 [ -f "$HELPERS" ] && source "$HELPERS"

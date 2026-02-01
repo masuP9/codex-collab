@@ -1,8 +1,16 @@
 {
   "name": "codex-collab",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Claude Code と OpenAI Codex CLI の協調タスク実行プラグイン",
   "author": {
     "name": "masuP9"
-  }
+  },
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "match_tool": "Bash",
+      "type": "prompt",
+      "path": "hooks/enforce-skill-usage.md"
+    }
+  ]
 }
