@@ -23,8 +23,12 @@ $ARGUMENTS
 
 ### Step 0: Load Helper Functions
 
-Source shared helper functions at the beginning of any bash block:
+Source shared helper functions at the beginning of any bash block. **Always set `CODEX_SKILL_CONTEXT=1`** to indicate skill context for the PreToolUse hook:
+
 ```bash
+# Mark skill context for PreToolUse hook detection
+export CODEX_SKILL_CONTEXT=1
+
 # Source helpers (assumes running from plugin root or project root)
 HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 if [ -f "$HELPERS" ]; then
@@ -33,6 +37,7 @@ fi
 ```
 
 > **Note:** If helpers are not available, the bash blocks include inline fallback definitions where necessary.
+> **Important:** The `CODEX_SKILL_CONTEXT=1` export is required for the PreToolUse hook to recognize this as skill context and allow Bash execution without blocking.
 
 ### Step 1: Load Settings
 

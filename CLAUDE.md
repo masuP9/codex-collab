@@ -38,9 +38,33 @@ PRを作成する前に、変更内容に応じて以下の **両方のファイ
 - `commands/` - `/collab` などのスラッシュコマンド
 - `scripts/` - 共通ヘルパースクリプト
 - `skills/codex-collaboration/` - スキル定義とリファレンス
+- `hooks/` - PreToolUse などのフック
+- `docs/` - プラグインドキュメント（Bash使用ルールなど）
 - `.claude-plugin/plugin.json` - プラグインメタデータ（バージョン含む）
 - `.claude-plugin/marketplace.json` - マーケットプレイス公開用メタデータ（バージョン含む）
 - `.gitignore` - Codex一時ファイルの除外パターン
+
+## Bash 使用ルール
+
+codex-collab のヘルパー関数を直接 Bash で実行すると、承認プロンプトが表示されることがあります。
+**必ずスキル経由で実行してください。**
+
+### クイックリファレンス
+
+| 目的 | 使用するスキル |
+|------|---------------|
+| 新しい協調タスク開始 | `/collab-codex [task]` |
+| 既存ペインへのプロンプト送信 | `/collab-codex-attach [prompt]` |
+| ステータス確認 | `/collab-codex-attach status` |
+
+### 詳細ドキュメント
+
+Bash 使用ルールの詳細（スキルコンテキスト検出の仕組み、検出パターン、制限事項、トラブルシューティング）については、以下を参照してください:
+
+**→ [docs/bash-usage.md](docs/bash-usage.md)**
+
+> **Note**: `hooks/enforce-skill-usage.md` の PreToolUse フックがこのルールを強制します。
+> 新しいコマンドを作成する場合は、`export CODEX_SKILL_CONTEXT=1` を Bash ブロックの先頭に追加してください。
 
 ## ヘルパースクリプトの管理
 
