@@ -54,8 +54,10 @@ HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 - `codex_hash_content()` - クロスプラットフォームハッシュ計算
 - `codex_find_pane()` - Codexペイン検出
 - `codex_verify_pane()` - ペインの有効性検証
-- `codex_send_prompt()` - プロンプト送信
+- `codex_send_prompt()` - プロンプト送信（paste-buffer方式）
 - `codex_send_prompt_file()` - ファイル参照によるプロンプト送信（長いプロンプト向け）
+- `codex_send_prompt_chunked()` - 分割送信によるプロンプト送信（長いプロンプトの安定送信向け）
+- `codex_send_chunked()` - 低レベルの分割送信（テキストのみ、Enterなし）
 - `codex_wait_completion()` - 完了待機
 - `codex_capture_output()` - 出力キャプチャ
 - `codex_check_tmux()` - tmuxセッション確認
