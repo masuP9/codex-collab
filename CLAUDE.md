@@ -6,15 +6,30 @@
 
 ### バージョン更新
 
-PRを作成する前に、変更内容に応じて `.claude-plugin/plugin.json` のバージョンを更新すること。
+PRを作成する前に、変更内容に応じて以下の **両方のファイル** のバージョンを更新すること。
+
+- `.claude-plugin/plugin.json`
+- `.claude-plugin/marketplace.json`
+
+**バージョニングルール:**
 
 - **パッチ (0.0.x)**: バグ修正、ドキュメント修正、小さな改善
 - **マイナー (0.x.0)**: 新機能追加、後方互換性のある変更
 - **メジャー (x.0.0)**: 破壊的変更
 
 ```json
+// plugin.json
 {
   "version": "0.3.0"  // ← 変更内容に応じて更新
+}
+
+// marketplace.json (plugins[0].version も同じ値に更新)
+{
+  "plugins": [
+    {
+      "version": "0.3.0"  // ← plugin.json と同じ値
+    }
+  ]
 }
 ```
 
@@ -24,6 +39,7 @@ PRを作成する前に、変更内容に応じて `.claude-plugin/plugin.json` 
 - `scripts/` - 共通ヘルパースクリプト
 - `skills/codex-collaboration/` - スキル定義とリファレンス
 - `.claude-plugin/plugin.json` - プラグインメタデータ（バージョン含む）
+- `.claude-plugin/marketplace.json` - マーケットプレイス公開用メタデータ（バージョン含む）
 - `.gitignore` - Codex一時ファイルの除外パターン
 
 ## ヘルパースクリプトの管理
@@ -54,8 +70,10 @@ HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 - `codex_hash_content()` - クロスプラットフォームハッシュ計算
 - `codex_find_pane()` - Codexペイン検出
 - `codex_verify_pane()` - ペインの有効性検証
-- `codex_send_prompt()` - プロンプト送信
+- `codex_send_prompt()` - プロンプト送信（paste-buffer方式）
 - `codex_send_prompt_file()` - ファイル参照によるプロンプト送信（長いプロンプト向け）
+- `codex_send_prompt_chunked()` - 分割送信によるプロンプト送信（長いプロンプトの安定送信向け）
+- `codex_send_chunked()` - 低レベルの分割送信（テキストのみ、Enterなし）
 - `codex_wait_completion()` - 完了待機
 - `codex_capture_output()` - 出力キャプチャ
 - `codex_check_tmux()` - tmuxセッション確認

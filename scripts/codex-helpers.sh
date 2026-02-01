@@ -23,6 +23,8 @@ _CODEX_HELPERS_LOADED=1
 : "${CODEX_POLL_INTERVAL:=2}"       # seconds
 : "${CODEX_IDLE_THRESHOLD:=5}"      # polls without change
 : "${CODEX_CAPTURE_LINES:=5000}"    # lines to capture from pane
+: "${CODEX_CHUNK_SIZE:=200}"        # chunk size for chunked sending (characters)
+: "${CODEX_CHUNK_DELAY:=0.02}"      # delay between chunks (seconds)
 
 # Temporary directory for all working files
 : "${CODEX_TMP_DIR:=./tmp}"
@@ -491,6 +493,146 @@ ${end_marker}"
   tmux send-keys -t "$pane_id" Enter
 
   rm -f "$temp_prompt"
+
+  # Output marker for caller to use
+  echo "$end_marker"
+  return 0
+}
+
+# ==============================================================================
+# Chunked Prompt Sending (for long prompts stability)
+# ==============================================================================
+
+# Low-level function: Send long text in chunks (UTF-8 safe)
+# Usage: codex_send_chunked "$PANE_ID" "$TEXT" [chunk_size] [delay]
+# Note: This sends text only, does NOT send Enter key
+# Note: Newlines within chunks are preserved and sent as-is via send-keys -l
+codex_send_chunked() {
+  local pane_id="$1"
+  local text="$2"
+  local chunk_size="${3:-${CODEX_CHUNK_SIZE:-200}}"
+  local delay="${4:-${CODEX_CHUNK_DELAY:-0.02}}"
+
+  if [ -z "$pane_id" ] || [ -z "$text" ]; then
+    echo "Error: pane_id and text required" >&2
+    return 1
+  fi
+
+  # Build tmux command as array for safe execution (handles paths with spaces)
+  local -a tmux_cmd=(tmux)
+  if [ -n "${CODEX_TMUX_SOCKET:-}" ]; then
+    tmux_cmd=(tmux -S "$CODEX_TMUX_SOCKET")
+  fi
+
+  codex_debug "send_chunked: sending ${#text} chars in chunks of $chunk_size with ${delay}s delay"
+
+  # Determine locale for UTF-8 safe processing
+  # Try common UTF-8 locales, fallback to C (byte-based splitting)
+  local utf8_locale="C"
+  local loc
+  for loc in "C.UTF-8" "en_US.UTF-8" "UTF-8"; do
+    if locale -a 2>/dev/null | grep -qiE "^${loc}$"; then
+      utf8_locale="$loc"
+      codex_debug "send_chunked: using locale $utf8_locale for UTF-8 safe splitting"
+      break
+    fi
+  done
+
+  if [ "$utf8_locale" = "C" ]; then
+    codex_debug "send_chunked: No UTF-8 locale found, using byte-based splitting (may break multibyte chars)"
+  fi
+
+  # Split text into chunks using awk with NUL separator for reliable reading
+  # This preserves:
+  # - Empty chunks (whitespace-only sections)
+  # - Newlines within the text (reconstructed in awk)
+  # - Multibyte characters (with proper UTF-8 locale)
+  local chunk
+  local chunk_count=0
+
+  while IFS= read -r -d '' chunk || [ -n "$chunk" ]; do
+    # Send chunk (including those with newlines - send-keys -l handles them)
+    "${tmux_cmd[@]}" send-keys -t "$pane_id" -l -- "$chunk"
+    chunk_count=$((chunk_count + 1))
+    # Only sleep if delay is non-zero
+    [ "$delay" != "0" ] && sleep "$delay"
+  done < <(printf '%s' "$text" | LC_ALL="$utf8_locale" awk -v size="$chunk_size" '
+    BEGIN {
+      ORS = "\0"  # NUL separator for reliable bash read
+      content = ""
+    }
+    {
+      # Reconstruct full text with newlines preserved
+      if (NR > 1) content = content "\n"
+      content = content $0
+    }
+    END {
+      len = length(content)
+      if (len == 0) exit
+      for (i = 1; i <= len; i += size) {
+        print substr(content, i, size)
+      }
+    }
+  ')
+
+  codex_debug "send_chunked: sent $chunk_count chunks"
+  return 0
+}
+
+# Send prompt to Codex using chunked method (for long prompts stability)
+# Usage: codex_send_prompt_chunked "$PANE_ID" "$PROMPT_CONTENT" [marker_id]
+# Arguments:
+#   pane_id        - Target tmux pane ID (e.g., %1)
+#   prompt_content - The prompt text to send
+#   marker_id      - Optional custom marker ID (default: timestamp-random)
+# Returns: End marker string on success (use with codex_wait_completion)
+# Note: This is more stable for long prompts (>1000 chars) than codex_send_prompt
+# Note: Inherits chunk_size/delay from CODEX_CHUNK_SIZE/CODEX_CHUNK_DELAY env vars
+codex_send_prompt_chunked() {
+  local pane_id="$1"
+  local prompt_content="$2"
+  local marker_id="${3:-$(date +%s)-$RANDOM}"
+
+  if [ -z "$pane_id" ] || [ -z "$prompt_content" ]; then
+    echo "Error: pane_id and prompt_content required" >&2
+    return 1
+  fi
+
+  # Build tmux command as array for safe execution
+  local -a tmux_cmd=(tmux)
+  if [ -n "${CODEX_TMUX_SOCKET:-}" ]; then
+    tmux_cmd=(tmux -S "$CODEX_TMUX_SOCKET")
+  fi
+
+  # Check if pane is ready for input (not in copy mode)
+  local pane_mode
+  pane_mode=$("${tmux_cmd[@]}" display-message -t "$pane_id" -p '#{pane_in_mode}' 2>/dev/null)
+  if [ "$pane_mode" = "1" ]; then
+    # Pane is in copy mode, try to exit
+    "${tmux_cmd[@]}" send-keys -t "$pane_id" q 2>/dev/null
+    sleep 0.2
+  fi
+
+  # Clear any existing input in the pane first
+  codex_clear_input "$pane_id" 2>/dev/null || true
+
+  local end_marker="<<RESPONSE_END_${marker_id}>>"
+
+  # Add marker instruction to prompt
+  local full_prompt="${prompt_content}
+
+When finished, output exactly: ${end_marker}"
+
+  codex_debug "send_prompt_chunked: sending ${#full_prompt} chars to pane $pane_id"
+
+  # Send using chunked method
+  codex_send_chunked "$pane_id" "$full_prompt"
+
+  # Wait a moment for chunks to be processed, then send Enter
+  sleep 0.1
+  "${tmux_cmd[@]}" send-keys -t "$pane_id" Enter
+
+  codex_debug "send_prompt_chunked: Enter sent, marker: $end_marker"
 
   # Output marker for caller to use
   echo "$end_marker"
