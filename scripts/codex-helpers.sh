@@ -643,10 +643,246 @@ When finished, output exactly: ${end_marker}"
 # Completion Detection Functions
 # ==============================================================================
 
-# Wait for Codex completion using marker + idle detection
-# Usage: codex_wait_completion "$PANE_ID" "$END_MARKER" "$BEFORE_HASH"
+# Setup event-driven completion monitoring using tmux pipe-pane
+# Must be called BEFORE sending the prompt to Codex
+# Usage: signal=$(codex_setup_evented_wait "$PANE_ID" "$END_MARKER")
+# Returns: Signal channel name on success, empty on failure
+# Caller must call codex_cleanup_evented_wait after completion
+# Note: Creates a temporary detector script for POSIX compatibility
+# Note: pipe-pane subprocess doesn't inherit $TMUX env, so explicit socket path is required
+# Note: Arguments are passed via temp files to avoid quoting issues
+codex_setup_evented_wait() {
+  local pane_id="$1"
+  local end_marker="$2"
+
+  # Build tmux command for this shell (handles socket option)
+  local -a tmux_cmd=(tmux)
+  local tmux_socket_path=""
+
+  if [ -n "${CODEX_TMUX_SOCKET:-}" ]; then
+    # Explicit socket specified
+    tmux_socket_path="$CODEX_TMUX_SOCKET"
+    tmux_cmd=(tmux -S "$CODEX_TMUX_SOCKET")
+  elif [ -n "${TMUX:-}" ]; then
+    # Extract socket path from $TMUX (format: socket_path,pid,window)
+    local socket_rel
+    socket_rel=$(echo "$TMUX" | cut -d, -f1)
+    # Convert relative path to absolute for pipe-pane subprocess
+    if [[ "$socket_rel" == /* ]]; then
+      tmux_socket_path="$socket_rel"
+    else
+      tmux_socket_path="$(pwd)/$socket_rel"
+    fi
+    tmux_cmd=(tmux -S "$tmux_socket_path")
+    codex_debug "setup_evented: detected socket from TMUX: $tmux_socket_path"
+  fi
+
+  # Generate unique signal channel with PID and timestamp to avoid collisions
+  local signal
+  signal=$(codex_generate_signal "codex-done")
+  codex_debug "setup_evented: signal=$signal, marker=$end_marker"
+
+  # Create unique temporary directory for this wait session
+  # Using signal as part of path ensures no collision with concurrent waits
+  codex_ensure_tmp_dir > /dev/null
+  local session_dir="$(pwd)/${CODEX_TMP_DIR:-tmp}/evented-${signal}"
+  mkdir -p "$session_dir"
+
+  # Write arguments to files to avoid shell quoting issues
+  # This is safer than passing arguments with special characters through shell
+  printf '%s' "$end_marker" > "$session_dir/marker"
+  printf '%s' "$signal" > "$session_dir/signal"
+  printf '%s' "$tmux_socket_path" > "$session_dir/socket"
+
+  # Write detector script (POSIX-compatible /bin/sh)
+  # Script reads arguments from files, avoiding all quoting issues
+  local detector_script="$session_dir/detector.sh"
+  cat > "$detector_script" << 'DETECTOR_SCRIPT'
+#!/bin/sh
+# Marker detector for codex_setup_evented_wait
+# Arguments: SESSION_DIR (contains marker, signal, socket files)
+SESSION_DIR="$1"
+
+# Read arguments from files (avoids quoting issues)
+MARKER=$(cat "$SESSION_DIR/marker")
+SIGNAL=$(cat "$SESSION_DIR/signal")
+SOCKET=$(cat "$SESSION_DIR/socket")
+
+# ESC character for stripping ANSI sequences
+ESC=$(printf '\033')
+
+while IFS= read -r line; do
+  # Strip ANSI escape sequences (CSI sequences: ESC [ ... letter)
+  clean=$(printf '%s' "$line" | sed "s/${ESC}\\[[^a-zA-Z]*[a-zA-Z]//g")
+
+  # Check for marker using case pattern matching
+  case "$clean" in
+    *"$MARKER"*)
+      if [ -n "$SOCKET" ]; then
+        tmux -S "$SOCKET" wait-for -S "$SIGNAL"
+      else
+        tmux wait-for -S "$SIGNAL"
+      fi
+      exit 0
+      ;;
+  esac
+done
+DETECTOR_SCRIPT
+  chmod +x "$detector_script"
+
+  codex_debug "setup_evented: created session dir: $session_dir"
+
+  # Build pipe-pane command - only pass session_dir, no quoting issues
+  local pipe_cmd="sh '$detector_script' '$session_dir'"
+
+  codex_debug "setup_evented: starting pipe-pane monitoring"
+  codex_debug "setup_evented: pipe_cmd=$pipe_cmd"
+  if ! "${tmux_cmd[@]}" pipe-pane -t "$pane_id" "$pipe_cmd" 2>/dev/null; then
+    codex_debug "setup_evented: pipe-pane setup failed"
+    rm -rf "$session_dir"
+    return 1
+  fi
+
+  # Return the signal channel name
+  # Note: Session dir can be derived from signal using codex_evented_session_dir()
+  echo "$signal"
+  return 0
+}
+
+# Get session directory path for a given signal
+# Usage: session_dir=$(codex_evented_session_dir "$SIGNAL")
+# This allows cleanup without relying on global variables
+codex_evented_session_dir() {
+  local signal="$1"
+  echo "$(pwd)/${CODEX_TMP_DIR:-tmp}/evented-${signal}"
+}
+
+# Cleanup event-driven monitoring
+# Usage: codex_cleanup_evented_wait "$PANE_ID" ["$SIGNAL"]
+# If SIGNAL is provided, session dir is derived from it (preferred for concurrent safety)
+codex_cleanup_evented_wait() {
+  local pane_id="$1"
+  local signal="${2:-}"
+
+  # Build tmux command array (handles socket option)
+  local -a tmux_cmd=(tmux)
+  if [ -n "${CODEX_TMUX_SOCKET:-}" ]; then
+    tmux_cmd=(tmux -S "$CODEX_TMUX_SOCKET")
+  elif [ -n "${TMUX:-}" ]; then
+    local socket_rel
+    socket_rel=$(echo "$TMUX" | cut -d, -f1)
+    if [[ "$socket_rel" == /* ]]; then
+      tmux_cmd=(tmux -S "$socket_rel")
+    else
+      tmux_cmd=(tmux -S "$(pwd)/$socket_rel")
+    fi
+  fi
+
+  codex_debug "cleanup_evented: disabling pipe-pane for $pane_id"
+  "${tmux_cmd[@]}" pipe-pane -t "$pane_id" 2>/dev/null || true
+
+  # Clean up session directory
+  # Prefer signal-derived path for concurrent safety
+  local session_dir=""
+  if [ -n "$signal" ]; then
+    session_dir=$(codex_evented_session_dir "$signal")
+  fi
+
+  if [ -n "$session_dir" ] && [ -d "$session_dir" ]; then
+    codex_debug "cleanup_evented: removing session dir: $session_dir"
+    rm -rf "$session_dir"
+  fi
+}
+
+# Wait for event-driven signal with timeout
+# Usage: codex_wait_evented_signal "$SIGNAL" [timeout]
+# Returns: 0 if signal received, 1 if timeout
+codex_wait_evented_signal() {
+  local signal="$1"
+  local wait_timeout="${2:-${CODEX_WAIT_TIMEOUT:-180}}"
+
+  # Build tmux command array (handles socket option)
+  local -a tmux_cmd=(tmux)
+  if [ -n "${CODEX_TMUX_SOCKET:-}" ]; then
+    tmux_cmd=(tmux -S "$CODEX_TMUX_SOCKET")
+  elif [ -n "${TMUX:-}" ]; then
+    # Extract socket path from $TMUX
+    local socket_rel
+    socket_rel=$(echo "$TMUX" | cut -d, -f1)
+    if [[ "$socket_rel" == /* ]]; then
+      tmux_cmd=(tmux -S "$socket_rel")
+    else
+      tmux_cmd=(tmux -S "$(pwd)/$socket_rel")
+    fi
+  fi
+
+  # Check if timeout command is available
+  if ! command -v timeout &>/dev/null; then
+    codex_debug "wait_evented_signal: timeout command not available"
+    return 2  # Signal to use fallback
+  fi
+
+  codex_debug "wait_evented_signal: waiting for signal $signal (timeout: ${wait_timeout}s)"
+
+  if timeout "${wait_timeout}s" "${tmux_cmd[@]}" wait-for "$signal" 2>/dev/null; then
+    codex_debug "wait_evented_signal: signal received"
+    return 0
+  else
+    codex_debug "wait_evented_signal: timeout or wait-for failed"
+    return 1
+  fi
+}
+
+# Event-driven completion detection using tmux pipe-pane + wait-for
+# Usage: codex_wait_completion_evented "$PANE_ID" "$END_MARKER" [timeout]
+# Returns: 0 if marker detected, 1 if timeout or error, 2 if fallback needed
+# Note: pipe-pane captures NEW output only. If marker already appeared, use polling.
+# Limitation: Overwrites any existing pipe-pane on the target pane.
+codex_wait_completion_evented() {
+  local pane_id="$1"
+  local end_marker="$2"
+  local wait_timeout="${3:-${CODEX_WAIT_TIMEOUT:-180}}"
+
+  # Setup monitoring (timeout check is done in codex_wait_evented_signal)
+  local signal
+  signal=$(codex_setup_evented_wait "$pane_id" "$end_marker")
+  if [ -z "$signal" ]; then
+    codex_debug "wait_evented: setup failed"
+    return 2
+  fi
+
+  codex_debug "wait_evented: signal=$signal, timeout=${wait_timeout}s"
+  echo "Waiting for Codex response (event-driven, timeout: ${wait_timeout}s)..." >&2
+
+  # Wait for signal (timeout check is done inside codex_wait_evented_signal)
+  local wait_result
+  codex_wait_evented_signal "$signal" "$wait_timeout"
+  wait_result=$?
+
+  # Cleanup (always run, pass signal for concurrent-safe session dir cleanup)
+  codex_cleanup_evented_wait "$pane_id" "$signal"
+
+  case $wait_result in
+    0)
+      codex_debug "wait_evented: marker detected, signal received"
+      echo "Codex response completed (marker found, event-driven)" >&2
+      return 0
+      ;;
+    2)
+      codex_debug "wait_evented: fallback requested (timeout command unavailable)"
+      return 2
+      ;;
+    *)
+      codex_debug "wait_evented: timeout"
+      return 1
+      ;;
+  esac
+}
+
+# Wait for Codex completion using marker + idle detection (polling fallback)
+# Usage: codex_wait_completion_polling "$PANE_ID" "$END_MARKER" "$BEFORE_HASH"
 # Returns: 0 if completed, 1 if timeout
-codex_wait_completion() {
+codex_wait_completion_polling() {
   local pane_id="$1"
   local end_marker="$2"
   local before_hash="${3:-}"
@@ -659,7 +895,8 @@ codex_wait_completion() {
   local idle_count=0
   local last_hash="$before_hash"
 
-  echo "Waiting for Codex response (timeout: ${wait_timeout}s)..." >&2
+  codex_debug "wait_polling: starting polling loop (timeout: ${wait_timeout}s, interval: ${poll_interval}s)"
+  echo "Waiting for Codex response (polling, timeout: ${wait_timeout}s)..." >&2
 
   local max_polls=$((wait_timeout / poll_interval))
   for i in $(seq 1 "$max_polls"); do
@@ -670,6 +907,7 @@ codex_wait_completion() {
 
     # Check for completion marker
     if echo "$current_output" | grep -qF "$end_marker"; then
+      codex_debug "wait_polling: marker found at poll $i"
       echo "Codex response completed (marker found)" >&2
       completed=true
       break
@@ -681,6 +919,7 @@ codex_wait_completion() {
       if [ "$idle_count" -ge "$idle_threshold" ]; then
         # Check if Codex appears to be at prompt (ready for input)
         if echo "$current_output" | tail -3 | grep -qE '^>\s*$|^codex>\s*$|^\[codex\]'; then
+          codex_debug "wait_polling: idle detected at poll $i"
           echo "Codex appears idle (marker not found, using idle detection)" >&2
           completed=true
           break
@@ -697,9 +936,76 @@ codex_wait_completion() {
   if [ "$completed" = true ]; then
     return 0
   else
+    codex_debug "wait_polling: timeout after ${wait_timeout}s"
     echo "Warning: Timeout after ${wait_timeout}s - response may be incomplete" >&2
     return 1
   fi
+}
+
+# Wait for Codex completion (main entry point)
+# Tries event-driven method first, falls back to polling if unavailable or timeout
+# Usage: codex_wait_completion "$PANE_ID" "$END_MARKER" "$BEFORE_HASH"
+# Returns: 0 if completed, 1 if timeout
+# Note: Event-driven only detects NEW output after pipe-pane setup. If prompt
+#       was already sent, marker may have appeared before monitoring started.
+#       In timeout case, falls back to polling for a quick check.
+codex_wait_completion() {
+  local pane_id="$1"
+  local end_marker="$2"
+  local before_hash="${3:-}"
+  local wait_timeout="${CODEX_WAIT_TIMEOUT:-180}"
+
+  codex_debug "wait_completion: pane=$pane_id, marker=$end_marker"
+
+  # Check if we're in tmux
+  if [ -z "${TMUX:-}" ] && [ -z "${CODEX_TMUX_SOCKET:-}" ]; then
+    codex_debug "wait_completion: not in tmux, using polling"
+    codex_wait_completion_polling "$pane_id" "$end_marker" "$before_hash"
+    return $?
+  fi
+
+  # First, do a quick check if marker is already present (handles race condition)
+  local current_output
+  current_output=$(tmux capture-pane -t "$pane_id" -p -S -5000 2>/dev/null)
+  if echo "$current_output" | grep -qF "$end_marker"; then
+    codex_debug "wait_completion: marker already present in output"
+    echo "Codex response completed (marker found)" >&2
+    return 0
+  fi
+
+  # Try event-driven method
+  echo "Waiting for Codex response (timeout: ${wait_timeout}s)..." >&2
+  codex_debug "wait_completion: trying event-driven method"
+
+  codex_wait_completion_evented "$pane_id" "$end_marker" "$wait_timeout"
+  local evented_result=$?
+
+  case $evented_result in
+    0)
+      # Success via event-driven
+      return 0
+      ;;
+    2)
+      # Fallback requested (pipe-pane or timeout unavailable)
+      codex_debug "wait_completion: event-driven unavailable, falling back to polling"
+      echo "Event-driven detection unavailable, using polling..." >&2
+      codex_wait_completion_polling "$pane_id" "$end_marker" "$before_hash"
+      return $?
+      ;;
+    *)
+      # Event-driven timeout - do a final check with polling
+      # This handles the case where marker appeared but pipe-pane missed it
+      codex_debug "wait_completion: event-driven timeout, doing final poll check"
+      current_output=$(tmux capture-pane -t "$pane_id" -p -S -5000 2>/dev/null)
+      if echo "$current_output" | grep -qF "$end_marker"; then
+        codex_debug "wait_completion: marker found in final poll check"
+        echo "Codex response completed (marker found)" >&2
+        return 0
+      fi
+      echo "Warning: Timeout after ${wait_timeout}s - response may be incomplete" >&2
+      return 1
+      ;;
+  esac
 }
 
 # ==============================================================================
