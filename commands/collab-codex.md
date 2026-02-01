@@ -146,133 +146,136 @@ Provide your plan now.
 EOF
 ```
 
-**2. Check for attached Codex pane (if launch.prefer_attached: true):**
+**2. Get or create Codex pane (tmux mode):**
 
-If `launch.prefer_attached` is enabled (default: true) and inside tmux, check for an existing attached Codex pane:
+In tmux mode, use the unified `codex_get_or_create_pane` function which:
+1. First checks for an existing Codex pane (stored ID or auto-detect)
+2. If not found, launches a new interactive Codex instance
+3. The pane persists after each task (no auto-close)
+4. Saves the pane ID for future reuse
 
 ```bash
 # Source helpers
 HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 [ -f "$HELPERS" ] && source "$HELPERS"
 
-# PREFER_ATTACHED should be set from launch.prefer_attached setting in Step 1
-# Default: true (enabled)
-# Set PREFER_ATTACHED="false" to skip attached pane checks
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+mkdir -p "$TMP_DIR"
+PANE_ID_FILE="$TMP_DIR/codex-pane-id"
+SANDBOX="${SANDBOX_SETTING:-read-only}"
 
-# Skip if not in tmux or prefer_attached is disabled
-if [ -n "$TMUX" ] && [ "${PREFER_ATTACHED:-true}" = "true" ]; then
-  TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
-  PANE_ID_FILE="$TMP_DIR/codex-pane-id"
-  ATTACHED_PANE=""
+# Determine launch mode
+LAUNCH_MODE="inline"
+if [ -n "$TMUX" ]; then
+  LAUNCH_MODE="tmux"
+elif command -v wt.exe &>/dev/null; then
+  LAUNCH_MODE="wt"
+fi
+echo "Using launch mode: $LAUNCH_MODE"
 
-  # Use helper function for pane detection (handles stored ID + auto-detect)
-  if type codex_find_pane &>/dev/null; then
-    ATTACHED_PANE=$(codex_find_pane "$PANE_ID_FILE")
+# For tmux mode: get or create persistent Codex pane
+CODEX_PANE=""
+if [ "$LAUNCH_MODE" = "tmux" ]; then
+  if type codex_get_or_create_pane &>/dev/null; then
+    CODEX_PANE=$(codex_get_or_create_pane "$SANDBOX" "$PANE_ID_FILE")
   else
-    # Inline fallback if helpers not available
-    # Method 1: Check stored pane ID
+    # Inline fallback: check for existing pane first
     if [ -f "$PANE_ID_FILE" ]; then
       STORED_PANE=$(cat "$PANE_ID_FILE")
-      if tmux list-panes -s -F '#{pane_id}' 2>/dev/null | grep -qx "$STORED_PANE"; then
-        PANE_CMD=$(tmux display-message -t "$STORED_PANE" -p '#{pane_current_command}' 2>/dev/null)
-        if [ "$PANE_CMD" = "codex" ]; then
-          ATTACHED_PANE="$STORED_PANE"
-          echo "Found attached Codex pane from stored ID: $ATTACHED_PANE"
-        elif [ "$PANE_CMD" = "node" ]; then
-          PANE_CONTENT=$(tmux capture-pane -t "$STORED_PANE" -p -S -2000 2>/dev/null)
-          if echo "$PANE_CONTENT" | grep -q "│ >_ OpenAI Codex"; then
-            ATTACHED_PANE="$STORED_PANE"
-            echo "Found attached Codex pane from stored ID: $ATTACHED_PANE"
-          fi
-        fi
+      PANE_CMD=$(tmux display-message -t "$STORED_PANE" -p '#{pane_current_command}' 2>/dev/null)
+      if [ "$PANE_CMD" = "codex" ] || [ "$PANE_CMD" = "node" ]; then
+        CODEX_PANE="$STORED_PANE"
+        echo "Found existing Codex pane: $CODEX_PANE"
       fi
     fi
 
-    # Method 2: Auto-detect Codex pane if not found
-    if [ -z "$ATTACHED_PANE" ]; then
-      echo "Scanning for Codex panes in current session..."
-      for pane in $(tmux list-panes -s -F '#{pane_id}' 2>/dev/null); do
-        PANE_CMD=$(tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null)
-        if [ "$PANE_CMD" = "codex" ]; then
-          ATTACHED_PANE="$pane"
-          echo "Auto-detected Codex pane: $ATTACHED_PANE"
-          echo "$ATTACHED_PANE" > "$PANE_ID_FILE"
-          break
-        elif [ "$PANE_CMD" = "node" ]; then
-          PANE_CONTENT=$(tmux capture-pane -t "$pane" -p -S -2000 2>/dev/null)
-          if echo "$PANE_CONTENT" | grep -qE "│ >_ OpenAI Codex|^› |Worked for [0-9]+"; then
-            ATTACHED_PANE="$pane"
-            echo "Auto-detected Codex pane: $ATTACHED_PANE"
-            echo "$ATTACHED_PANE" > "$PANE_ID_FILE"
-            break
-          fi
-        fi
-      done
+    # If no existing pane, launch new one
+    if [ -z "$CODEX_PANE" ]; then
+      echo "Launching new Codex pane..."
+      ORIGINAL_PANE=$(tmux display-message -p '#{pane_id}')
+      tmux split-window -h -d -c "$(pwd)" "codex -s $SANDBOX"
+      sleep 2  # Wait for Codex to initialize
+      CODEX_PANE=$(tmux list-panes -F '#{pane_id}' | grep -v "^${ORIGINAL_PANE}$" | tail -1)
+      echo "$CODEX_PANE" > "$PANE_ID_FILE"
+      tmux select-pane -t "$ORIGINAL_PANE"
+      echo "Launched new Codex pane: $CODEX_PANE"
     fi
   fi
 
-  # *** CONTROL FLOW ***
-  # If attached pane found, skip to Step 3-Attached and do NOT run Step 3/4
-  if [ -n "$ATTACHED_PANE" ]; then
-    echo "Using attached Codex pane instead of launching new instance"
-    # → Skip Steps 3-4, go directly to Step 3-Attached
+  if [ -z "$CODEX_PANE" ]; then
+    echo "Error: Failed to get or create Codex pane"
+    exit 1
   fi
 fi
 ```
 
-> **Control Flow Note**: If `ATTACHED_PANE` is set after this check, skip Steps 3-4 entirely and proceed to **Step 3-Attached**. The workflow branches here based on whether an attached pane was found.
+> **Key Change**: Instead of launching `codex exec` (which exits after completion), we now launch `codex` in interactive mode. The pane persists and can be reused for subsequent prompts.
 
-**3. Determine launch mode:**
+**3. Send prompt to Codex pane (tmux mode):**
 
-Apply launch mode based on `launch.mode` setting:
-- **auto** (default): If inside tmux session → tmux, else → wt.exe → inline
-- **tmux**: Force tmux mode (error if not in tmux session)
-- **wt**: Force Windows Terminal mode (error if wt.exe not available)
-- **inline**: Force inline mode (blocks terminal until completion)
-
-> **Note:** tmux mode only works when already inside a tmux session (`$TMUX` is set). This splits the current pane horizontally and runs Codex on the right side. Outside tmux, wt.exe provides real-time output visibility.
-
+For tmux mode, send the prompt to the persistent pane:
 ```bash
-# Read settings from .claude/codex-collab.local.md (YAML frontmatter)
-# LAUNCH_MODE_SETTING = launch.mode from settings (default: auto)
-# SANDBOX_SETTING = sandbox from settings (default: read-only)
-# MODEL_SETTING = model from settings (optional)
+# Source helpers
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
 
-# Validate and resolve launch mode
-case "$LAUNCH_MODE_SETTING" in
-  tmux)
-    if [ -z "$TMUX" ]; then
-      echo "Error: Not inside a tmux session. Run 'tmux' first or set launch.mode to 'wt' or 'auto'."
-      exit 1
-    fi
-    LAUNCH_MODE="tmux"
-    ;;
-  wt)
-    if ! command -v wt.exe &>/dev/null; then
-      echo "Error: wt.exe is not available. Set launch.mode to 'tmux' or 'auto'."
-      exit 1
-    fi
-    LAUNCH_MODE="wt"
-    ;;
-  inline)
-    LAUNCH_MODE="inline"
-    ;;
-  auto|*)
-    # Auto-detect: if in tmux → tmux, else → wt → inline
-    LAUNCH_MODE="inline"
-    if [ -n "$TMUX" ]; then
-      LAUNCH_MODE="tmux"
-    elif command -v wt.exe &>/dev/null; then
-      LAUNCH_MODE="wt"
-    fi
-    ;;
-esac
-echo "Using launch mode: $LAUNCH_MODE"
+# CODEX_PANE is set from step 2
+# CODEX_PROMPT file was prepared in Step 3.1
+
+# Capture state before sending
+BEFORE_CONTENT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
+if type codex_hash_content &>/dev/null; then
+  BEFORE_HASH=$(echo "$BEFORE_CONTENT" | codex_hash_content)
+else
+  BEFORE_HASH=$(echo "$BEFORE_CONTENT" | md5sum 2>/dev/null | awk '{print $1}')
+fi
+
+# Send prompt using chunked method (handles long prompts)
+if type codex_send_prompt_chunked &>/dev/null; then
+  END_MARKER=$(codex_send_prompt_chunked "$CODEX_PANE" "$(cat "$CODEX_PROMPT")")
+else
+  # Inline fallback
+  MARKER_ID="$(date +%s)-$RANDOM"
+  END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
+  PROMPT_CONTENT=$(cat "$CODEX_PROMPT")
+  FULL_PROMPT="${PROMPT_CONTENT}
+
+When finished, output exactly: ${END_MARKER}"
+
+  tmux send-keys -t "$CODEX_PANE" C-u
+  sleep 0.1
+  TEMP_FILE="$TMP_DIR/codex-prompt-$$"
+  echo "$FULL_PROMPT" > "$TEMP_FILE"
+  tmux load-buffer "$TEMP_FILE"
+  tmux paste-buffer -t "$CODEX_PANE"
+  sleep 0.5
+  tmux send-keys -t "$CODEX_PANE" Enter
+  rm -f "$TEMP_FILE"
+fi
+
+echo "Prompt sent to Codex pane: $CODEX_PANE"
+echo "Completion marker: $END_MARKER"
 ```
 
-**3. Launch Codex:**
+**4. Launch Codex (wt/inline mode fallback):**
 
-**tmux mode** (recommended - no focus stealing, uses `tmux wait-for` for instant completion detection):
+For non-tmux environments, fall back to the original `codex exec` approach:
+
+**wt mode** (Windows Terminal - may steal focus):
+```bash
+SANDBOX="${SANDBOX_SETTING:-read-only}"
+# Note: using ; instead of && so marker is written even on Codex failure
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat \"$CODEX_PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$CODEX_OUTPUT\"; echo '=== CODEX_DONE ===' >> \"$CODEX_OUTPUT\""
+```
+
+**inline mode** (fallback - blocks terminal):
+```bash
+SANDBOX="${SANDBOX_SETTING:-read-only}"
+# Note: using ; instead of && so marker is written even on Codex failure
+cat "$CODEX_PROMPT" | codex exec -s "$SANDBOX" - 2>&1 | tee "$CODEX_OUTPUT"; echo '=== CODEX_DONE ===' >> "$CODEX_OUTPUT"
+```
+
+**Legacy tmux mode** (codex exec - use only when pane persistence is not needed):
 ```bash
 # Run Codex in a new pane (split horizontally) with signal-based completion
 PROMPT="$CODEX_PROMPT"
@@ -286,6 +289,7 @@ ORIGINAL_PANE=$(tmux display-message -p '#{pane_id}')
 
 # Split current window horizontally and run Codex in the new pane
 # Signal is sent even on failure (finally-style)
+# NOTE: This pane closes after codex exec completes
 tmux split-window -h -d \
   "cd \"$(pwd)\"; \
    cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\"; \
@@ -454,10 +458,43 @@ Wait for Codex to complete. Method depends on launch mode:
 
 > **Important:** Set the Bash tool's `timeout` parameter to `min(wait_timeout + 60, 600) * 1000` milliseconds. Example: for 180s wait, use `timeout: 240000`. Max: 600000ms (10 minutes).
 
-**tmux mode** (signal-based, instant detection):
+**tmux mode with persistent pane** (marker + idle detection):
+```bash
+# Source helpers
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+# CODEX_PANE and END_MARKER from Step 3
+# BEFORE_HASH from Step 3
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-180}"
+
+if type codex_wait_completion &>/dev/null; then
+  CODEX_WAIT_TIMEOUT="$WAIT_TIMEOUT"
+  codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
+else
+  # Inline fallback: poll for marker
+  COMPLETED=false
+  for i in $(seq 1 $WAIT_TIMEOUT); do
+    CURRENT_OUTPUT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
+    if echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
+      echo "Codex response completed (marker found)"
+      COMPLETED=true
+      break
+    fi
+    sleep 1
+  done
+  [ "$COMPLETED" = false ] && echo "Warning: Timeout after ${WAIT_TIMEOUT}s"
+fi
+
+# Capture output to file for Step 5
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+tmux capture-pane -t "$CODEX_PANE" -p -S -5000 > "$TMP_DIR/codex-plan-output.md"
+```
+
+**Legacy tmux mode with codex exec** (signal-based, instant detection):
 ```bash
 # WAIT_TIMEOUT from settings (default: 180 seconds)
-# SIGNAL from Step 3
+# SIGNAL from Step 3 (legacy mode)
 # Note: Requires GNU coreutils `timeout` command. On macOS, install with `brew install coreutils` (provides `gtimeout`).
 echo "Waiting for Codex..."
 if timeout "${WAIT_TIMEOUT}s" tmux wait-for "$SIGNAL"; then
@@ -490,7 +527,7 @@ fi
 **If timeout occurs:**
 1. Check if Codex is still running in the tmux pane or other terminal
 2. If still running → Re-run wait with extended timeout
-3. If completed but signal/marker missing → Read partial output and report error
+3. If completed but marker missing → Read partial output and report error
 4. If failed → Report error and offer to retry
 
 ### Step 5: Read and Process Response
@@ -800,19 +837,23 @@ If timeout (`codex.wait_timeout`, default 180s) without completion marker:
 ## Notes
 
 - **Launch modes**:
-  - **attached**: Uses existing Codex pane (from `/collab-attach`). No new pane created. Uses marker + idle detection for completion. Enabled by `launch.prefer_attached: true` (default).
-  - **tmux**: Only works when inside a tmux session (`$TMUX` set). Splits current pane horizontally and runs Codex on the right. No focus stealing. Uses `tmux wait-for` for instant completion detection.
-  - **wt**: Windows Terminal new pane. May steal focus (GitHub issue #17460). Uses file polling for completion detection.
-  - **inline**: Runs in current terminal. Blocks until completion.
+  - **tmux** (default when in tmux): Launches Codex in **interactive mode** (`codex` not `codex exec`). The pane persists after each task and can be reused for subsequent prompts. Uses `codex_get_or_create_pane` to find existing pane or create new one.
+  - **wt**: Windows Terminal new pane. May steal focus (GitHub issue #17460). Uses `codex exec` (pane closes after completion). Uses file polling for completion detection.
+  - **inline**: Runs `codex exec` in current terminal. Blocks until completion.
   - **auto** (default): If inside tmux session → tmux, else → wt → inline.
-- **Attached pane priority**: When `launch.prefer_attached: true` (default), `/collab` first checks for `tmp/codex-pane-id`. If a valid Codex pane exists, prompts are sent there instead of launching a new instance. This preserves conversation context from `/collab-attach` sessions. Set `launch.prefer_attached: false` to always launch new instances.
+- **Pane persistence (tmux mode)**:
+  - Codex is launched in **interactive mode** (not `codex exec`), so the pane stays open after completion.
+  - Pane ID is saved to `tmp/codex-pane-id` for reuse.
+  - On subsequent invocations, the existing pane is reused instead of creating a new one.
+  - The pane is verified with `codex_verify_pane` before reuse; stale panes are automatically replaced.
+  - This preserves Codex's conversation context across multiple prompts.
+  - To force a new pane, delete `tmp/codex-pane-id` or close the existing Codex pane.
+  - **Note**: This behavior is the new default in tmux mode. The `launch.prefer_attached` setting is now redundant for tmux mode as pane reuse is always enabled. The setting remains relevant for non-tmux environments.
 - **Completion detection**:
-  - **tmux mode**: Uses `tmux wait-for` signal for instant detection (no polling). The `timeout` command wraps it for timeout support.
+  - **tmux mode**: Uses marker (`<<RESPONSE_END_...>>`) + idle detection via `codex_wait_completion`.
   - **wt/inline mode**: Polls output file for `=== CODEX_DONE ===` marker every 1 second.
 - Output files are saved in project's `tmp/` directory to share between WSL sessions. This directory is excluded by `.gitignore` so temporary files don't appear in diffs.
-- Completion marker `=== CODEX_DONE ===` is appended to output file (kept for compatibility and debugging)
-- Use `cat file | codex exec -` format to pass prompts (avoids escaping issues)
-- Each Codex call is independent (no session state between calls)
+- **Legacy mode**: The old `codex exec` approach with signal-based completion is still documented but not the default. Use it when you need stateless execution (no context preservation).
 - **Important**: Stage changes with `git add -A` before review so Codex can see new files (ensures visibility regardless of file discovery method)
 - **Multi-turn exchange**: Use `next_action: continue|stop` to control exchange flow. Planning exchange max iterations default is 3.
 - **Review iteration**: Enabled by default (`review.enabled: true`). Max iterations default is 5 (higher than exchange because goal is clear and diff is small).

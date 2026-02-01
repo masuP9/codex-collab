@@ -15,9 +15,11 @@ This skill enables effective collaboration between two AI systems:
 
 The primary pattern is "Review Type" where Codex creates plans and reviews implementation, while Claude Code executes the actual work.
 
-**Key Feature**: WSL環境では、Codexは新しいペインで起動するため、リアルタイムで出力を確認できます。完了は自動検知されます。その他の環境では現在のターミナルで実行されます。
+**Key Feature**: tmux環境では、Codexはインタラクティブモードで起動し、ペインは永続化されます。一度起動したペインは再利用され、会話コンテキストが維持されます。WSL/その他の環境では`codex exec`で実行されます。
 
-**Alternative Mode**: `/collab-attach`コマンドで既存のCodexペインに接続し、永続的なコラボレーションが可能です（tmux環境のみ）。
+**Pane Persistence (tmux)**: `/collab-codex`コマンドは既存のCodexペインを自動検出し、なければ新規起動します。ペインIDは`tmp/codex-pane-id`に保存され、以降の呼び出しで再利用されます。
+
+**Alternative Mode**: `/collab-attach`コマンドで既存のCodexペインに手動で接続することも可能です（tmux環境のみ）。
 
 ## Prerequisites
 

@@ -1903,3 +1903,150 @@ codex_parse_response() {
   export CODEX_RESPONSE_BODY
   export CODEX_RESPONSE_META
 }
+
+# ==============================================================================
+# Interactive Pane Launch Functions
+# ==============================================================================
+#
+# Functions to launch Codex in interactive mode and persist the pane.
+#
+
+# Launch Codex in interactive mode in a new tmux pane
+# Usage: pane_id=$(codex_launch_interactive_pane [sandbox_mode])
+# Arguments:
+#   sandbox_mode - Optional: read-only | workspace-write | danger-full-access (default: read-only)
+# Returns: New pane ID on success, empty on failure
+# Side effects: Saves pane ID to tmp/codex-pane-id
+#
+# This function:
+# 1. Splits the current tmux window horizontally
+# 2. Launches `codex` (interactive mode) in the new pane
+# 3. Waits for Codex to initialize (detects banner)
+# 4. Saves the pane ID for future reuse
+codex_launch_interactive_pane() {
+  local sandbox_mode="${1:-read-only}"
+  local pane_id_file="${2:-$(codex_tmp_path codex-pane-id)}"
+
+  # Build tmux command (handles socket option)
+  local -a tmux_cmd=(tmux)
+  if [ -n "${CODEX_TMUX_SOCKET:-}" ]; then
+    tmux_cmd=(tmux -S "$CODEX_TMUX_SOCKET")
+  fi
+
+  # Check if we're in tmux
+  if [ -z "${TMUX:-}" ] && [ -z "${CODEX_TMUX_SOCKET:-}" ]; then
+    echo "Error: Not inside a tmux session" >&2
+    return 1
+  fi
+
+  # Check if codex command is available
+  if ! command -v codex &>/dev/null; then
+    echo "Error: codex command not found" >&2
+    return 1
+  fi
+
+  codex_debug "launch_interactive: sandbox=$sandbox_mode"
+
+  # Capture original pane ID to ensure focus returns after split
+  local original_pane
+  original_pane=$("${tmux_cmd[@]}" display-message -p '#{pane_id}')
+
+  # Get current working directory
+  local work_dir
+  work_dir=$(pwd)
+
+  # Split window horizontally and launch Codex in interactive mode
+  # Use -P -F to directly capture the new pane ID (more reliable than list-panes filtering)
+  local new_pane
+  new_pane=$("${tmux_cmd[@]}" split-window -h -d -c "$work_dir" -P -F '#{pane_id}' "codex -s $sandbox_mode")
+
+  if [ -z "$new_pane" ]; then
+    echo "Error: Failed to get new pane ID" >&2
+    return 1
+  fi
+
+  codex_debug "launch_interactive: new_pane=$new_pane, waiting for initialization"
+
+  # Wait for Codex to initialize (detect banner or prompt)
+  local init_timeout=30
+  local init_success=false
+  for i in $(seq 1 $init_timeout); do
+    local pane_content
+    pane_content=$("${tmux_cmd[@]}" capture-pane -t "$new_pane" -p -S -50 2>/dev/null)
+
+    # Check for Codex banner or prompt character
+    if echo "$pane_content" | grep -qE "│ >_ OpenAI Codex|^› "; then
+      codex_debug "launch_interactive: Codex initialized after ${i}s"
+      init_success=true
+      break
+    fi
+
+    sleep 1
+  done
+
+  if [ "$init_success" != true ]; then
+    echo "Warning: Codex initialization timeout after ${init_timeout}s, proceeding anyway" >&2
+    # Still proceed - pane exists and codex may have a different banner format
+  fi
+
+  # Save pane ID for future reuse
+  codex_ensure_tmp_dir > /dev/null
+  echo "$new_pane" > "$pane_id_file"
+  codex_debug "launch_interactive: saved pane ID to $pane_id_file"
+
+  # Ensure focus returns to original pane
+  "${tmux_cmd[@]}" select-pane -t "$original_pane"
+
+  echo "$new_pane"
+  return 0
+}
+
+# Get or create a Codex pane (unified entry point)
+# Usage: pane_id=$(codex_get_or_create_pane [sandbox_mode])
+# This function:
+# 1. First tries to find an existing Codex pane (codex_find_pane)
+# 2. Verifies the pane is still valid (codex_verify_pane)
+# 3. If not found or invalid, launches a new interactive pane (codex_launch_interactive_pane)
+# Returns: Pane ID on success, empty on failure
+codex_get_or_create_pane() {
+  local sandbox_mode="${1:-read-only}"
+  local pane_id_file="${2:-$(codex_tmp_path codex-pane-id)}"
+
+  codex_debug "get_or_create: checking for existing pane"
+
+  # Try to find existing pane
+  local existing_pane
+  existing_pane=$(codex_find_pane "$pane_id_file" 2>/dev/null)
+
+  if [ -n "$existing_pane" ]; then
+    # Verify the pane is still valid (running Codex)
+    local verify_result
+    verify_result=$(codex_verify_pane "$existing_pane")
+    if [ "$verify_result" = "valid" ]; then
+      codex_debug "get_or_create: found and verified existing pane $existing_pane"
+      echo "$existing_pane"
+      return 0
+    else
+      codex_debug "get_or_create: pane $existing_pane verification failed: $verify_result"
+      echo "Existing pane $existing_pane is no longer valid ($verify_result), creating new one..." >&2
+      # Remove stale pane ID file
+      rm -f "$pane_id_file"
+    fi
+  fi
+
+  codex_debug "get_or_create: no existing pane, launching new one"
+  echo "No existing Codex pane found, launching new instance..." >&2
+
+  # Launch new interactive pane
+  local new_pane
+  new_pane=$(codex_launch_interactive_pane "$sandbox_mode" "$pane_id_file")
+
+  if [ -n "$new_pane" ]; then
+    echo "Launched new Codex pane: $new_pane" >&2
+    echo "$new_pane"
+    return 0
+  else
+    echo "Error: Failed to launch Codex pane" >&2
+    return 1
+  fi
+}
