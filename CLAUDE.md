@@ -65,11 +65,12 @@ fi
 <<RESPONSE_END_1770044801-429>>
 ```
 
-### ファイルベース応答
+### 完了検出方式
 
-長い応答はファイルに書き込まれる:
-- 応答ファイル: `tmp/codex-response-*.md`
-- プロンプト内でファイルパスを指定し、Codex に書き込ませる
+Codex の応答完了はポーリング方式で検出する:
+- マーカー検出: `<<RESPONSE_END_xxx>>` の出現を監視
+- アイドル検出: 出力のハッシュが一定時間変化しないことで完了を推定
+- `codex_wait_completion()` がこれらを統合的に処理
 
 ## プロジェクト構造
 
@@ -91,9 +92,8 @@ codex-collab のヘルパー関数を直接 Bash で実行すると、承認プ�
 
 | 目的 | 使用するスキル |
 |------|---------------|
-| 新しい協調タスク開始 | `/collab-codex [task]` |
-| 既存ペインへのプロンプト送信 | `/collab-codex-attach [prompt]` |
-| ステータス確認 | `/collab-codex-attach status` |
+| 協調タスク開始 | `/collab-codex [task]` |
+| 問題調査 | `/strong-inference [problem]` |
 
 ### 詳細ドキュメント
 
@@ -125,20 +125,24 @@ HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 
 1. `scripts/codex-helpers.sh` に関数を追加
 2. 関数名は `codex_` プレフィックスを使用（例: `codex_new_function()`）
-3. 各コマンドでインラインのフォールバック実装も追加（ヘルパーが利用できない場合に備えて）
 
 ### 現在の関数一覧
 
-- `codex_hash_content()` - クロスプラットフォームハッシュ計算
-- `codex_find_pane()` - Codexペイン検出
-- `codex_verify_pane()` - ペインの有効性検証
-- `codex_send_prompt()` - プロンプト送信（paste-buffer方式）
-- `codex_send_prompt_file()` - ファイル参照によるプロンプト送信（長いプロンプト向け）
-- `codex_send_prompt_chunked()` - 分割送信によるプロンプト送信（長いプロンプトの安定送信向け）
-- `codex_send_chunked()` - 低レベルの分割送信（テキストのみ、Enterなし）
-- `codex_wait_completion()` - 完了待機
+コア関数（すべてのコマンドで必須）:
+
+- `codex_ensure_tmp_dir()` - 一時ディレクトリの確保（絶対パスを返す）
+- `codex_find_pane()` - Codexペイン検出（保存ID + 自動検出）
+- `codex_verify_pane()` - ペインのヘルスチェック（存在・セッション・プロセス確認）
+- `codex_get_or_create_pane()` - ペインの取得または作成（統合エントリポイント）
+- `codex_send_prompt_file()` - ファイル参照によるプロンプト送信
+- `codex_send_prompt_chunked()` - 分割送信によるプロンプト送信（長いプロンプト向け）
+- `codex_wait_completion()` - 完了待機（ポーリング方式）
 - `codex_capture_output()` - 出力キャプチャ
+
+ユーティリティ関数:
+
+- `codex_hash_content()` - クロスプラットフォームハッシュ計算
 - `codex_check_tmux()` - tmuxセッション確認
-- `codex_generate_signal()` - ユニークシグナル生成
-- `codex_acquire_lock()` - 排他ロック取得（競合防止）
-- `codex_release_lock()` - ロック解放
+- `codex_get_language_directive()` - 言語指示生成（多言語対応）
+- `codex_extract_metadata()` - レスポンスからメタデータ抽出
+- `codex_get_status()` / `codex_get_verdict()` - メタデータフィールド取得

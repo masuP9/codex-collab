@@ -8,7 +8,7 @@ The codex-collab plugin includes a PreToolUse hook that enforces skill-based exe
 
 ## Why Use Skills Instead of Direct Bash?
 
-When you execute Bash commands through a skill (like `/collab-codex` or `/collab-codex-attach`), the commands run within the skill's permission scope (`allowed-tools: Bash`). This means:
+When you execute Bash commands through a skill (like `/collab-codex`), the commands run within the skill's permission scope (`allowed-tools: Bash`). This means:
 
 - **No approval prompts**: Commands are pre-authorized by the skill definition
 - **Consistent behavior**: The same command always works the same way
@@ -21,9 +21,7 @@ When you execute the same commands **outside** a skill context (directly in conv
 | Skill | Purpose | Example |
 |-------|---------|---------|
 | `/collab-codex [task]` | Start a new collaboration workflow | `/collab-codex implement feature X` |
-| `/collab-codex-attach [prompt]` | Send prompt to existing Codex pane | `/collab-codex-attach review this code` |
-| `/collab-codex-attach status` | Check Codex pane status | `/collab-codex-attach status` |
-| `/collab-codex-attach capture` | Capture current Codex output | `/collab-codex-attach capture` |
+| `/strong-inference [problem]` | Investigate a problem with competing hypotheses | `/strong-inference APIが時々500エラーを返す` |
 
 ## How Skill Context Detection Works
 
@@ -48,7 +46,7 @@ When this marker is present, all Bash commands are allowed without blocking.
 
 ### Heuristic Method (Less Reliable)
 
-The hook may also check if you're currently processing a `/collab-codex` or `/collab-codex-attach` command based on conversation context. However, this is not always reliably accessible depending on platform implementation.
+The hook may also check if you're currently processing a `/collab-codex` or `/strong-inference` command based on conversation context. However, this is not always reliably accessible depending on platform implementation.
 
 ## Detection Patterns
 
@@ -76,7 +74,7 @@ This Bash command appears to use codex-collab helper functions directly.
 To ensure consistent behavior and avoid unnecessary approval prompts, please use the appropriate skill instead:
 
 - `/collab-codex [task]` - Start a new collaboration workflow
-- `/collab-codex-attach [prompt]` - Send a prompt to existing Codex pane
+- `/collab-codex [task]` - Start a new collaboration workflow (reuses existing Codex pane if available)
 
 Reason: Skill execution provides proper tool permissions and avoids repeated approval requests.
 

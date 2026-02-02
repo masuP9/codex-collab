@@ -234,23 +234,7 @@ else
 fi
 
 # Get language directive (empty for English)
-LANG_DIRECTIVE=""
-if type codex_get_language_directive &>/dev/null; then
-  LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
-else
-  # Inline fallback
-  if [ "$LANGUAGE" != "en" ] && [ -n "$LANGUAGE" ]; then
-    if [ "$LANGUAGE" = "ja" ]; then
-      LANG_DIRECTIVE="**日本語で回答してください。途中の説明や思考プロセスも日本語で記述してください。**
-
-"
-    else
-      LANG_DIRECTIVE="**${LANGUAGE}で回答してください。途中の説明や思考プロセスも${LANGUAGE}で記述してください。**
-
-"
-    fi
-  fi
-fi
+LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
 
 cat > "$HYPOTHESIS_PROMPT" << EOF
 ${LANG_DIRECTIVE}You are helping investigate a problem using Strong Inference methodology.
@@ -312,141 +296,45 @@ mkdir -p "$SI_DIR"
 PANE_ID_FILE="$TMP_DIR/codex-pane-id"
 SANDBOX="read-only"
 HYPOTHESIS_PROMPT="$TMP_DIR/strong-inference-hypothesis-prompt.txt"
-HYPOTHESIS_OUTPUT="$TMP_DIR/strong-inference-hypothesis-output.md"
 
 # Get or create Codex pane
 CODEX_PANE=""
 if [ -n "$TMUX" ]; then
-  if type codex_get_or_create_pane &>/dev/null; then
-    CODEX_PANE=$(codex_get_or_create_pane "$SANDBOX" "$PANE_ID_FILE")
-  else
-    # Inline fallback: check for existing pane
-    if [ -f "$PANE_ID_FILE" ]; then
-      STORED_PANE=$(cat "$PANE_ID_FILE")
-      # Verify pane exists, belongs to current session, and is running Codex
-      CURRENT_SESSION=$(tmux display-message -p '#{session_id}' 2>/dev/null)
-      PANE_SESSION=$(tmux display-message -t "$STORED_PANE" -p '#{session_id}' 2>/dev/null)
-      PANE_CMD=$(tmux display-message -t "$STORED_PANE" -p '#{pane_current_command}' 2>/dev/null)
-      if [ "$PANE_SESSION" = "$CURRENT_SESSION" ] && { [ "$PANE_CMD" = "codex" ] || [ "$PANE_CMD" = "node" ]; }; then
-        CODEX_PANE="$STORED_PANE"
-      fi
-    fi
-    # Launch new if not found
-    if [ -z "$CODEX_PANE" ]; then
-      ORIGINAL_PANE=$(tmux display-message -p '#{pane_id}')
-      # Use -P -F to directly capture the new pane ID (more reliable than list-panes filtering)
-      CODEX_PANE=$(tmux split-window -h -d -c "$(pwd)" -P -F '#{pane_id}' "codex -s $SANDBOX")
-      sleep 3
-      # Only save pane ID if split succeeded (non-empty)
-      if [ -n "$CODEX_PANE" ]; then
-        echo "$CODEX_PANE" > "$PANE_ID_FILE"
-        tmux select-pane -t "$ORIGINAL_PANE"
-      fi
-    fi
-  fi
+  CODEX_PANE=$(codex_get_or_create_pane "$SANDBOX" "$PANE_ID_FILE")
 fi
 
 # Graceful fallback to claude-only mode (not exit)
 if [ -z "$CODEX_PANE" ]; then
   echo "WARNING: No Codex pane available. Switching to claude-only mode."
   echo "MODE_SWITCHED=claude-only"
-  # Signal to the LLM to use claude-only mode for this step
   exit 0
 fi
 
 echo "Using Codex pane: $CODEX_PANE"
 
-# Use file-based response workflow if available (recommended)
+# Capture state before sending
+BEFORE_CONTENT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
+BEFORE_HASH=$(echo "$BEFORE_CONTENT" | codex_hash_content)
+
+# Send prompt using chunked method
 WAIT_TIMEOUT="${CODEX_WAIT_TIMEOUT:-180}"
-USE_FILE_WORKFLOW=false
-PROMPT_SENT=false
+END_MARKER=$(codex_send_prompt_chunked "$CODEX_PANE" "$(cat "$HYPOTHESIS_PROMPT")")
+echo "Prompt sent to Codex pane: $CODEX_PANE"
+echo "Completion marker: $END_MARKER"
 
-if type codex_file_response_workflow &>/dev/null; then
-  echo "Using file-based response protocol..."
-
-  RESPONSE=$(codex_file_response_workflow "$CODEX_PANE" "$HYPOTHESIS_PROMPT" "$WAIT_TIMEOUT")
-  WORKFLOW_RESULT=$?
-  PROMPT_SENT=true  # Prompt was sent regardless of success/failure
-
-  if [ $WORKFLOW_RESULT -eq 0 ]; then
-    USE_FILE_WORKFLOW=true
-    # Save response to output file
-    SI_OUTPUT_FILE="$SI_DIR/${TASK_ID}-codex-response.md"
-    echo "$RESPONSE" > "$SI_OUTPUT_FILE"
-    echo "Response received and saved to: $SI_OUTPUT_FILE"
-
-    # Save state with response file path
-    SI_STATE_FILE="$TMP_DIR/strong-inference-state-${TASK_ID}.env"
-    cat > "$SI_STATE_FILE" << EOF
-TASK_ID=$TASK_ID
-STATE_FILE=$STATE_FILE
-CODEX_PANE=$CODEX_PANE
-USE_FILE_WORKFLOW=true
-SI_OUTPUT_FILE=$SI_OUTPUT_FILE
-EOF
-    echo "State saved to: $SI_STATE_FILE"
-  else
-    echo "Warning: File-based workflow returned code $WORKFLOW_RESULT"
-    echo "Prompt was already sent. Falling back to capture-pane for response retrieval."
-    USE_LEGACY_CAPTURE=true
-  fi
-fi
-
-# Legacy fallback: only used when file-based workflow is NOT available
-if [ "$PROMPT_SENT" = "false" ]; then
-  # Capture state before sending
-  BEFORE_CONTENT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
-  if type codex_hash_content &>/dev/null; then
-    BEFORE_HASH=$(echo "$BEFORE_CONTENT" | codex_hash_content)
-  else
-    BEFORE_HASH=$(echo "$BEFORE_CONTENT" | md5sum 2>/dev/null | awk '{print $1}')
-  fi
-
-  # Send prompt
-  MARKER_ID="$(date +%s)-$RANDOM"
-  END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
-
-  if type codex_send_prompt_chunked &>/dev/null; then
-    END_MARKER=$(codex_send_prompt_chunked "$CODEX_PANE" "$(cat "$HYPOTHESIS_PROMPT")")
-  else
-    # Inline fallback
-    PROMPT_CONTENT=$(cat "$HYPOTHESIS_PROMPT")
-    FULL_PROMPT="${PROMPT_CONTENT}
-
-When finished, output exactly: ${END_MARKER}"
-
-    tmux send-keys -t "$CODEX_PANE" C-u
-    sleep 0.1
-    TEMP_FILE="$TMP_DIR/codex-prompt-$$"
-    echo "$FULL_PROMPT" > "$TEMP_FILE"
-    tmux load-buffer "$TEMP_FILE"
-    tmux paste-buffer -t "$CODEX_PANE"
-    sleep 0.5
-    tmux send-keys -t "$CODEX_PANE" Enter
-    rm -f "$TEMP_FILE"
-  fi
-
-  echo "Prompt sent to Codex pane: $CODEX_PANE"
-  echo "Completion marker: $END_MARKER"
-  echo "BEFORE_HASH=$BEFORE_HASH"
-
-  # Save state for next step (task-specific to avoid conflicts)
-  SI_STATE_FILE="$TMP_DIR/strong-inference-state-${TASK_ID}.env"
-  cat > "$SI_STATE_FILE" << EOF
+# Save state for next step
+SI_STATE_FILE="$TMP_DIR/strong-inference-state-${TASK_ID}.env"
+cat > "$SI_STATE_FILE" << EOF
 TASK_ID=$TASK_ID
 STATE_FILE=$STATE_FILE
 CODEX_PANE=$CODEX_PANE
 END_MARKER=$END_MARKER
 BEFORE_HASH=$BEFORE_HASH
-USE_FILE_WORKFLOW=false
 EOF
-  echo "State saved to: $SI_STATE_FILE"
-fi
+echo "State saved to: $SI_STATE_FILE"
 ```
 
 3. Wait for Codex response:
-
-> **Note:** If you used the **file-based response protocol** in step 2 (i.e., `codex_file_response_workflow`), the response is already received. Check `USE_FILE_WORKFLOW` in state file and skip waiting if true.
 
 ```bash
 export CODEX_SKILL_CONTEXT=1
@@ -457,8 +345,7 @@ HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
 SI_DIR="$TMP_DIR/strong-inference"
 
-# Load state from previous step (task-specific file)
-# If TASK_ID is set, use that; otherwise find most recent state file
+# Load state from previous step
 if [ -n "$TASK_ID" ]; then
   SI_STATE_FILE="$TMP_DIR/strong-inference-state-${TASK_ID}.env"
 else
@@ -473,65 +360,14 @@ fi
 source "$SI_STATE_FILE"
 echo "Loaded state for task: $TASK_ID"
 
-# Check if file-based workflow was used and succeeded
+# Wait for completion
 HYPOTHESIS_OUTPUT="$TMP_DIR/strong-inference-hypothesis-output.md"
+CODEX_WAIT_TIMEOUT=180
+codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
 
-if [ "$USE_FILE_WORKFLOW" = "true" ] && [ -n "$SI_OUTPUT_FILE" ] && [ -f "$SI_OUTPUT_FILE" ]; then
-  echo "Response already received via file-based workflow"
-  cp "$SI_OUTPUT_FILE" "$HYPOTHESIS_OUTPUT"
-  echo "Output available at: $HYPOTHESIS_OUTPUT"
-else
-  # Need to wait and capture via pane
-  # This handles both legacy prompt sending and USE_LEGACY_CAPTURE (file-based sent but failed to get response)
-  WAIT_TIMEOUT=180
-
-  if type codex_wait_completion &>/dev/null; then
-    CODEX_WAIT_TIMEOUT="$WAIT_TIMEOUT"
-    # END_MARKER may not be set if USE_LEGACY_CAPTURE - will rely on idle detection
-    codex_wait_completion "$CODEX_PANE" "${END_MARKER:-}" "${BEFORE_HASH:-}"
-  else
-    # Inline fallback: poll for marker or idle
-    COMPLETED=false
-    POLL_INTERVAL=2
-    IDLE_THRESHOLD=5
-    IDLE_COUNT=0
-    LAST_HASH="${BEFORE_HASH:-}"
-
-    for i in $(seq 1 $((WAIT_TIMEOUT / POLL_INTERVAL))); do
-      CURRENT_OUTPUT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
-      CURRENT_HASH=$(echo "$CURRENT_OUTPUT" | md5sum 2>/dev/null | awk '{print $1}')
-
-      # Check for marker if set
-      if [ -n "${END_MARKER:-}" ] && echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
-        echo "Codex response completed (marker found)"
-        COMPLETED=true
-        break
-      fi
-
-      if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
-        IDLE_COUNT=$((IDLE_COUNT + 1))
-        if [ "$IDLE_COUNT" -ge "$IDLE_THRESHOLD" ]; then
-          if echo "$CURRENT_OUTPUT" | tail -5 | grep -qE '^\s*›|^>'; then
-            echo "Codex appears idle"
-            COMPLETED=true
-            break
-          fi
-        fi
-      else
-        IDLE_COUNT=0
-        LAST_HASH="$CURRENT_HASH"
-      fi
-
-      sleep $POLL_INTERVAL
-    done
-
-    [ "$COMPLETED" = false ] && echo "Warning: Timeout after ${WAIT_TIMEOUT}s"
-  fi
-
-  # Capture output
-  tmux capture-pane -t "$CODEX_PANE" -p -S -5000 > "$HYPOTHESIS_OUTPUT"
-  echo "Output captured to: $HYPOTHESIS_OUTPUT"
-fi
+# Capture output
+codex_capture_output "$CODEX_PANE" "$HYPOTHESIS_OUTPUT"
+echo "Output captured to: $HYPOTHESIS_OUTPUT"
 ```
 
 4. Parse hypotheses from response and update state file:
@@ -739,23 +575,7 @@ else
 fi
 
 # Get language directive (empty for English)
-LANG_DIRECTIVE=""
-if type codex_get_language_directive &>/dev/null; then
-  LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
-else
-  # Inline fallback
-  if [ "$LANGUAGE" != "en" ] && [ -n "$LANGUAGE" ]; then
-    if [ "$LANGUAGE" = "ja" ]; then
-      LANG_DIRECTIVE="**日本語で回答してください。途中の説明や思考プロセスも日本語で記述してください。**
-
-"
-    else
-      LANG_DIRECTIVE="**${LANGUAGE}で回答してください。途中の説明や思考プロセスも${LANGUAGE}で記述してください。**
-
-"
-    fi
-  fi
-fi
+LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
 
 cat > "$REVIEW_PROMPT" << EOF
 ${LANG_DIRECTIVE}Review the Strong Inference investigation results.

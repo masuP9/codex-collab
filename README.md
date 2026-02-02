@@ -35,8 +35,8 @@ codex-collab/
 ├── .claude-plugin/
 │   └── plugin.json        # プラグインメタデータ
 ├── commands/
-│   ├── collab.md          # /collab コマンド
-│   └── collab-attach.md   # /collab-attach コマンド
+│   ├── collab-codex.md    # /collab-codex コマンド
+│   └── strong-inference.md # /strong-inference コマンド
 ├── scripts/
 │   └── codex-helpers.sh   # 共通ヘルパー関数
 └── skills/
@@ -48,111 +48,46 @@ codex-collab/
 
 `scripts/codex-helpers.sh` には、コマンド間で共有される関数が定義されています:
 
-**基本関数:**
-- `codex_hash_content()` - クロスプラットフォームハッシュ計算
+**コア関数:**
 - `codex_find_pane()` - Codexペイン検出（保存ID + 自動検出）
-- `codex_verify_pane()` - ペインの有効性検証
-- `codex_send_prompt()` - tmux paste-bufferでのプロンプト送信
+- `codex_verify_pane()` - ペインのヘルスチェック（存在・セッション・プロセス確認）
+- `codex_get_or_create_pane()` - 既存ペインの検出または新規作成
 - `codex_send_prompt_file()` - ファイル参照によるプロンプト送信（長いプロンプト向け）
-- `codex_clear_input()` - ペイン入力欄のクリア
+- `codex_send_prompt_chunked()` - 分割送信によるプロンプト送信（長いプロンプトの安定送信向け）
 - `codex_wait_completion()` - マーカー + アイドル検出による完了待機
 - `codex_capture_output()` - ペイン出力のキャプチャ
 - `codex_check_tmux()` - tmuxセッション確認
+- `codex_ensure_tmp_dir()` - 一時ディレクトリ管理
+- `codex_get_language_directive()` - 言語指示生成
+
+**ユーティリティ関数:**
+- `codex_hash_content()` - クロスプラットフォームハッシュ計算
 - `codex_acquire_lock()` - 排他ロック取得（同時送信の競合防止）
 - `codex_release_lock()` - ロック解放
+- `codex_generate_signal()` - ユニークシグナル生成
 
-**軽量メタデータ抽出:**
+**メタデータ抽出:**
 - `codex_extract_metadata()` - 応答末尾のYAMLブロックを抽出
 - `codex_get_status()` - status フィールド取得（continue/stop）
 - `codex_get_verdict()` - verdict フィールド取得（pass/conditional/fail）
-- `codex_get_list()` - リストフィールド取得
-- `codex_parse_response()` - 応答を本文とメタデータに分離
 
-**自動承認（セキュア）:**
-- `codex_get_pending_command()` - アクティブな承認ダイアログを検出
-- `codex_approve_if_matches()` - パターンマッチで承認
-- `codex_approve_response_commands()` - set-buffer + wait-for を自動承認
-
-**セッション管理:**
-- `codex_collab_session_start()` - collabセッションを作成/アタッチ
-- `codex_collab_session_exists()` - セッション存在確認
-- `codex_collab_session_info()` - セッション情報表示
-- `codex_collab_session_kill()` - セッション終了
-
-各コマンドは自動的にヘルパーをsourceし、利用できない場合はインラインのフォールバック実装を使用します。
+各コマンドは自動的にヘルパーをsourceします。
 
 ## 使い方
 
-### `/collab` コマンド
+### `/collab-codex` コマンド
 
 協調ワークフローを開始します。
 
 ```
-/collab 新しい認証機能を実装して
+/collab-codex 新しい認証機能を実装して
 ```
 
 **自動検出機能 (tmuxモード):**
-- tmuxセッション内で実行時、`tmp/codex-pane-id`がなくても既存のCodexペインを自動検出
-- 検出されたペインは`tmp/codex-pane-id`に保存され、attached modeで使用
+- tmuxセッション内で実行時、既存のCodexペインを自動検出・再利用
+- ペインがなければ新規起動し、`tmp/codex-pane-id`に保存
 - 複数のCodexペインがある場合は最初のペインを使用（警告を表示）
-- Codexペインが見つからない場合は従来通り新規`codex exec`を起動
-
-### `/collab-attach` コマンド
-
-既存のCodexペインに接続して、永続的なコラボレーションを行います。
-
-```
-# まず別ペインでCodexを起動（インタラクティブモード）
-tmux split-window -h 'codex'
-
-# 既存のCodexペインにプロンプトを送信
-/collab-attach この機能の設計を考えて
-
-# ステータス確認
-/collab-attach status
-
-# 出力をキャプチャ
-/collab-attach capture
-
-# ペインIDをクリア（別のCodexペインに接続したい場合）
-/collab-attach detach
-```
-
-**特徴:**
-- tmuxセッション内で動作（`$TMUX`が必要）
-- 既存のCodexセッションを維持（コンテキストが保持される）
-- ペインIDは`tmp/codex-pane-id`に保存され、次回自動検出
-- **セッション状態管理**: 初回は完全コンテキスト、継続時は軽量な`## Update`形式で送信（トークン節約）
-- セッションは30分でタイムアウト（`tmp/codex-session-state`で管理）
-
-### プロジェクト内ソケットでの双方向通信（高度な使い方）
-
-`workspace-write` sandboxでCodexからClaude Codeへの通信を可能にするため、プロジェクト内にtmuxソケットを作成できます。
-
-```bash
-# ヘルパーをsource
-source scripts/codex-helpers.sh
-
-# collabセッションを作成（Codex自動起動）
-codex_collab_session_start --start-codex --attach
-
-# または手動でセッション作成
-tmux -S ./collab.sock new-session -s collab
-```
-
-**メリット:**
-- `workspace-write` sandboxでも双方向通信が可能
-- ポーリング不要のイベントドリブン完了検知（`wait-for`）
-- Codexの承認ダイアログを自動承認可能
-
-**構成:**
-```
-./collab.sock (プロジェクト内tmuxソケット)
-├── collab:1.0 - Claude Code (左ペイン)
-└── collab:1.1 - Codex (右ペイン)
-```
-
-詳細は `docs/bidirectional-communication-design.md` を参照してください。
+- 会話コンテキストが維持されるため、継続的な協調作業が可能
 
 ### `/strong-inference` コマンド
 
@@ -217,12 +152,12 @@ Codexの起動方法を選択できます:
 
 | モード | 説明 | フォーカス奪取 | 完了検知 |
 |--------|------|---------------|---------|
-| `tmux` | 現在のペインを分割してCodexを実行（右側に表示） | なし | `tmux wait-for`（即時） |
+| `tmux` | 現在のペインを分割してCodexを実行（右側に表示） | なし | マーカー + アイドル検出 |
 | `wt` | Windows Terminalの新しいペインで実行 | あり | ファイルポーリング |
 | `inline` | 現在のターミナルで実行（ブロッキング） | - | ファイルポーリング |
 | `auto` | tmuxセッション内ならtmux、そうでなければwt→inline | 状況による | モードに依存 |
 
-> **Note:** tmuxモードは現在のペインを水平分割し、右側でCodexを実行します。`tmux wait-for`によりCodex完了を即座に検知できます（ポーリング不要）。
+> **Note:** tmuxモードは現在のペインを水平分割し、右側でCodexを実行します。完了検出にはマーカー検出とアイドル検出を組み合わせたポーリング方式を使用します。
 
 ### 設定の優先順位
 

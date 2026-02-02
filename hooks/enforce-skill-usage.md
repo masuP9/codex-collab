@@ -19,10 +19,10 @@ The **primary and most reliable** method is checking for the `CODEX_SKILL_CONTEX
 **How to detect skill context (in order of reliability):**
 
 1. **Environment variable (RELIABLE)**: The command includes `export CODEX_SKILL_CONTEXT=1`
-   - All `/collab-codex` and `/collab-codex-attach` commands set this at the beginning
+   - All `/collab-codex` and `/strong-inference` commands set this at the beginning
    - This is the definitive signal that the command is running in skill context
 
-2. **Heuristic (less reliable)**: You are currently processing a `/collab-codex` or `/collab-codex-attach` command
+2. **Heuristic (less reliable)**: You are currently processing a `/collab-codex` or `/strong-inference` command
    - Note: This may not be reliably accessible to the hook depending on platform implementation
 
 **If skill context is detected**: Allow all Bash commands to proceed without blocking.
@@ -55,8 +55,7 @@ Check if the command contains any of these patterns using word-boundary matching
 2. **Inform the user** that codex-collab operations should use skills
 3. **Suggest** the appropriate skill:
    - For starting collaboration: `/collab-codex [task]`
-   - For sending prompts to existing Codex pane: `/collab-codex-attach [prompt]`
-   - For checking status: `/collab-codex-attach status`
+   - For investigating problems: `/strong-inference [problem]`
 
 ## If No Patterns Detected OR In Skill Context
 
@@ -79,8 +78,7 @@ permissions that avoid this friction.
 Use the appropriate skill instead:
 
 - `/collab-codex [task]` - Start a new collaboration workflow
-- `/collab-codex-attach [prompt]` - Send a prompt to existing Codex pane
-- `/collab-codex-attach status` - Check Codex pane status
+- `/strong-inference [problem]` - Investigate a problem with competing hypotheses
 
 ## More Information
 
