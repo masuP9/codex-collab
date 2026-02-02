@@ -227,6 +227,8 @@ if [ "$IS_NEW_SESSION" = true ]; then
 
 You are collaborating with Claude Code. This is the start of a new collaboration session.
 
+**IMPORTANT**: If you reference any files, always re-read them from disk even if you have read them before in this session. Ignore any cached content from earlier in this conversation.
+
 - Working directory: $(pwd)
 - Session turn: 1
 
@@ -238,6 +240,8 @@ PROMPT_EOF
 else
   cat > "$PROMPT_FILE" << PROMPT_EOF
 ## Update (Turn $TURN_COUNT)
+
+**IMPORTANT**: If you reference any files, always re-read them from disk. Ignore any cached content from earlier in this conversation.
 
 $USER_PROMPT
 PROMPT_EOF

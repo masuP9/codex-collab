@@ -154,12 +154,32 @@ tmux -S ./collab.sock new-session -s collab
 
 詳細は `docs/bidirectional-communication-design.md` を参照してください。
 
+### `/strong-inference` コマンド
+
+Strong Inference（強い推論）メソッドを使って、仮説駆動でバグ調査を行います。
+
+```
+# 基本的な使い方
+/strong-inference APIが時々500エラーを返す
+
+# モード指定
+/strong-inference --mode claude-only テストがフレーキーな原因を調べて
+```
+
+**特徴:**
+- 2-4個の競合仮説を生成
+- 各仮説を排除する「キラー実験」を設計
+- 仮説ツリーを `tmp/strong-inference/` に保存（調査状態を永続化）
+- tmuxモードではCodexが仮説生成、Claudeが検証実行
+
 ### スキルの自動起動
 
 以下のようなリクエストで自動的にスキルが有効になります:
 - 「Codexと協調してタスクを実行したい」
 - 「Codexにレビューを依頼して」
 - 「Codexに計画を作成させたい」
+- 「このバグの原因を調査して」（Strong Inferenceスキル）
+- 「仮説を立てて検証して」（Strong Inferenceスキル）
 
 ## 設定
 

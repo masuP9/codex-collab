@@ -106,6 +106,8 @@ rm -f "$CODEX_OUTPUT"
 cat > "$CODEX_PROMPT" << 'EOF'
 You are collaborating with Claude Code. Your role is to create a detailed implementation plan.
 
+**IMPORTANT**: If you reference any files, always re-read them from disk even if you have read them before in this session. Ignore any cached content from earlier in this conversation.
+
 ## Task
 [Task description]
 
@@ -647,6 +649,8 @@ rm -f "$CODEX_REVIEW"
 
 cat > "$REVIEW_PROMPT" << 'EOF'
 Review the implementation described below.
+
+**IMPORTANT**: If you reference any files, always re-read them from disk even if you have read them before in this session. Ignore any cached content from earlier in this conversation.
 
 ## Original Plan
 [Plan from Step 3]
