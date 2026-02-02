@@ -29,14 +29,28 @@ Source shared helper functions at the beginning of any bash block. **Always set 
 # Mark skill context for PreToolUse hook detection
 export CODEX_SKILL_CONTEXT=1
 
-# Source helpers (assumes running from plugin root or project root)
-HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+# Source helpers with robust fallback chain
+# 1. Try CLAUDE_PLUGIN_ROOT if valid
+# 2. Try Claude plugin cache (latest version)
+# 3. Try current directory (for development)
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+if [ -z "$HELPERS" ] || [ ! -f "$HELPERS" ]; then
+  HELPERS="$(pwd)/scripts/codex-helpers.sh"
+fi
 if [ -f "$HELPERS" ]; then
   source "$HELPERS"
+else
+  echo "Error: codex-helpers.sh not found" >&2
+  echo "Tried: CLAUDE_PLUGIN_ROOT, ~/.claude/plugins/cache, $(pwd)" >&2
 fi
 ```
 
-> **Note:** Helper functions are required for this workflow. If helpers fail to load, the commands will not work correctly.
+> **Note:** Helper functions are required for this workflow. The loader tries multiple locations: `CLAUDE_PLUGIN_ROOT`, Claude plugin cache, and current directory.
 > **Important:** The `CODEX_SKILL_CONTEXT=1` export is required for the PreToolUse hook to recognize this as skill context and allow Bash execution without blocking.
 
 ### Step 1: Load Settings

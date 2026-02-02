@@ -37,9 +37,15 @@ All codex-collab skills set this environment variable at the beginning of their 
 # Mark skill context for PreToolUse hook detection
 export CODEX_SKILL_CONTEXT=1
 
-# Source helpers
-HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
-source "$HELPERS"
+# Source helpers with fallback chain
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+[ -z "$HELPERS" ] || [ ! -f "$HELPERS" ] && HELPERS="$(pwd)/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
 ```
 
 When this marker is present, all Bash commands are allowed without blocking.
