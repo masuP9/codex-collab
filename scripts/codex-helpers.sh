@@ -89,10 +89,15 @@ codex_debug() {
 # Directory Setup
 # ==============================================================================
 
-# Ensure tmp directory exists
+# Ensure tmp directory exists and return absolute path
 # Usage: codex_ensure_tmp_dir
+# Returns: Absolute path to tmp directory (e.g., /full/path/to/project/tmp)
 codex_ensure_tmp_dir() {
-  local tmp_dir="${CODEX_TMP_DIR:-./tmp}"
+  local rel_dir="${CODEX_TMP_DIR:-tmp}"
+  # Remove leading ./ if present
+  rel_dir="${rel_dir#./}"
+  # Create absolute path
+  local tmp_dir="$(pwd)/${rel_dir}"
   if [ ! -d "$tmp_dir" ]; then
     mkdir -p "$tmp_dir"
   fi
@@ -390,8 +395,9 @@ codex_send_prompt() {
 When finished, output exactly: ${end_marker}"
 
   # Create temporary file in project tmp directory
-  codex_ensure_tmp_dir > /dev/null
-  local temp_prompt="$(pwd)/${CODEX_TMP_DIR:-tmp}/codex-prompt-$$"
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+  local temp_prompt="${tmp_dir}/codex-prompt-$$"
   echo "$full_prompt" > "$temp_prompt"
 
   # Use named buffer to avoid conflicts with default buffer
@@ -431,11 +437,13 @@ When finished, output exactly: ${end_marker}"
 
 # Send a short prompt that references instruction file and target files
 # This avoids paste-buffer corruption for long prompts
-# Usage: codex_send_prompt_file "$PANE_ID" "$INSTRUCTION_FILE" "file1.sh" "file2.sh" ...
+# Usage: codex_send_prompt_file "$PANE_ID" "$INSTRUCTION_FILE" [end_marker] "file1.sh" "file2.sh" ...
 # Returns: End marker on success, empty on failure
 #
 # The instruction file should contain detailed instructions in markdown format.
 # Codex will read the instruction file and apply it to the target files.
+#
+# If end_marker is provided (starts with <<), it will be used instead of generating a new one.
 #
 # Example instruction file (.codex-prompt.md):
 #   ## Review Instructions
@@ -449,8 +457,21 @@ codex_send_prompt_file() {
   local pane_id="$1"
   local instruction_file="$2"
   shift 2
-  local target_files=("$@")
-  local marker_id="${CODEX_MARKER_ID:-$(date +%s)-$RANDOM}"
+
+  # Check if third argument is an end_marker (starts with <<)
+  local end_marker=""
+  local target_files=()
+  if [[ "${1:-}" == "<<"* ]]; then
+    end_marker="$1"
+    shift
+  fi
+  target_files=("$@")
+
+  # Generate marker if not provided
+  if [ -z "$end_marker" ]; then
+    local marker_id="${CODEX_MARKER_ID:-$(date +%s)-$RANDOM}"
+    end_marker="<<RESPONSE_END_${marker_id}>>"
+  fi
 
   if [ -z "$pane_id" ]; then
     echo "Error: pane_id required" >&2
@@ -474,8 +495,6 @@ codex_send_prompt_file() {
   # Clear any existing input in the pane first
   codex_clear_input "$pane_id" 2>/dev/null || true
 
-  local end_marker="<<RESPONSE_END_${marker_id}>>"
-
   # Build the short prompt
   local prompt="Please read the instructions in ${instruction_file} and apply them"
 
@@ -498,8 +517,9 @@ IMPORTANT: After completing your response, output this exact marker on its own l
 ${end_marker}"
 
   # Create temporary file in project tmp directory
-  codex_ensure_tmp_dir > /dev/null
-  local temp_prompt="$(pwd)/${CODEX_TMP_DIR:-tmp}/codex-prompt-file-$$"
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+  local temp_prompt="${tmp_dir}/codex-prompt-file-$$"
   echo "$prompt" > "$temp_prompt"
 
   # Use named buffer to avoid conflicts with default buffer
@@ -741,8 +761,9 @@ codex_setup_evented_wait() {
 
   # Create unique temporary directory for this wait session
   # Using signal as part of path ensures no collision with concurrent waits
-  codex_ensure_tmp_dir > /dev/null
-  local session_dir="$(pwd)/${CODEX_TMP_DIR:-tmp}/evented-${signal}"
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+  local session_dir="${tmp_dir}/evented-${signal}"
   mkdir -p "$session_dir"
 
   # Write arguments to files to avoid shell quoting issues
@@ -811,7 +832,9 @@ DETECTOR_SCRIPT
 # This allows cleanup without relying on global variables
 codex_evented_session_dir() {
   local signal="$1"
-  echo "$(pwd)/${CODEX_TMP_DIR:-tmp}/evented-${signal}"
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+  echo "${tmp_dir}/evented-${signal}"
 }
 
 # Cleanup event-driven monitoring
@@ -1284,8 +1307,9 @@ codex_send_to_pane() {
   fi
 
   # Create temp file in project tmp directory
-  codex_ensure_tmp_dir > /dev/null
-  local temp_file="$(pwd)/${CODEX_TMP_DIR:-tmp}/codex-paste-$$-$RANDOM"
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+  local temp_file="${tmp_dir}/codex-paste-$$-$RANDOM"
   echo "$message" > "$temp_file"
 
   # Load to buffer, paste, then send Enter
@@ -2446,16 +2470,17 @@ codex_send_prompt_file_output() {
   local augmented_prompt
   augmented_prompt=$(codex_build_file_output_prompt "$original_prompt" "$output_file" "$end_marker")
 
-  # Create temp file with augmented prompt
+  # Create temp file with augmented prompt (use absolute path for Codex compatibility)
   local tmp_dir
   tmp_dir=$(codex_ensure_tmp_dir)
   local augmented_file="${tmp_dir}/codex-augmented-prompt-$$.txt"
   echo "$augmented_prompt" > "$augmented_file"
 
-  # Register output file in state
+  # Register output file and augmented prompt file in state
   codex_register_output_file "$output_file"
   codex_state_set "current_end_marker" "$end_marker"
   codex_state_set "current_prompt_file" "$prompt_file"
+  codex_state_set "current_augmented_file" "$augmented_file"
 
   # Send using existing file-based method
   if type codex_send_prompt_file &>/dev/null; then
@@ -2483,8 +2508,8 @@ When done, output exactly: $end_marker"
     rm -f "$buffer_file"
   fi
 
-  # Cleanup temp file
-  rm -f "$augmented_file"
+  # Note: augmented_file is NOT deleted here - caller is responsible for cleanup
+  # after response is confirmed (see codex_file_response_workflow)
 
   echo "$end_marker"
 }
@@ -2509,26 +2534,60 @@ codex_wait_completion_file_response() {
 
   codex_debug "wait_file_response: pane=$pane_id marker=$end_marker file=$output_file timeout=${wait_timeout}s"
 
-  # Use event-driven wait if available
-  local wait_result=1
-  if type codex_wait_completion_evented &>/dev/null; then
-    codex_debug "wait_file_response: using event-driven wait"
-    CODEX_WAIT_TIMEOUT="$wait_timeout"
-    codex_wait_completion_evented "$pane_id" "$end_marker"
-    wait_result=$?
+  # Capture baseline pane output BEFORE starting wait
+  # This helps us distinguish old markers from new ones
+  local baseline_output
+  baseline_output=$(tmux capture-pane -t "$pane_id" -p -S -5000 2>/dev/null)
+  local baseline_line_count
+  baseline_line_count=$(echo "$baseline_output" | wc -l)
+
+  codex_debug "wait_file_response: baseline has $baseline_line_count lines"
+
+  # Pre-check: If marker is already in pane output AND output file exists,
+  # this means Codex completed very quickly (before we could start monitoring)
+  # We require BOTH conditions to avoid false positives from old markers
+  local wait_result=0
+
+  if echo "$baseline_output" | grep -qF "$end_marker" && [ -f "$output_file" ] && [ -s "$output_file" ]; then
+    codex_debug "wait_file_response: marker present AND output file exists - quick completion"
+    echo "Codex response already completed (marker + file pre-detected)" >&2
+    # Small delay to ensure file is fully written
+    sleep 0.5
   else
-    # Fallback to polling
-    codex_debug "wait_file_response: using polling wait"
-    local before_hash=""
-    if type codex_wait_completion_polling &>/dev/null; then
+    # Use event-driven wait if available
+    wait_result=1
+    if type codex_wait_completion_evented &>/dev/null; then
+      codex_debug "wait_file_response: using event-driven wait"
+      CODEX_WAIT_TIMEOUT="$wait_timeout"
+      codex_wait_completion_evented "$pane_id" "$end_marker"
+      wait_result=$?
+
+      # If event-driven wait timed out, check if output file was created anyway
+      # This handles cases where pipe-pane fails to detect the marker
+      if [ "$wait_result" -ne 0 ] && [ -f "$output_file" ] && [ -s "$output_file" ]; then
+        codex_debug "wait_file_response: event-driven wait failed but output file exists"
+        echo "Note: Event-driven wait failed, but output file found" >&2
+        # Verify marker is now in pane output
+        local post_output
+        post_output=$(tmux capture-pane -t "$pane_id" -p -S -5000 2>/dev/null)
+        if echo "$post_output" | grep -qF "$end_marker"; then
+          codex_debug "wait_file_response: marker confirmed in pane output"
+          wait_result=0
+        fi
+      fi
+    elif type codex_wait_completion_polling &>/dev/null; then
+      # Fallback to polling
+      codex_debug "wait_file_response: using polling wait"
+      local before_hash=""
       codex_wait_completion_polling "$pane_id" "$end_marker" "$before_hash"
       wait_result=$?
     else
       # Simple inline polling
+      codex_debug "wait_file_response: using inline polling"
       for i in $(seq 1 "$wait_timeout"); do
-        local current_output
-        current_output=$(tmux capture-pane -t "$pane_id" -p -S -5000 2>/dev/null)
-        if echo "$current_output" | grep -qF "$end_marker"; then
+        local current_check
+        current_check=$(tmux capture-pane -t "$pane_id" -p -S -5000 2>/dev/null)
+        if echo "$current_check" | grep -qF "$end_marker"; then
           codex_debug "wait_file_response: marker found after ${i}s"
           wait_result=0
           break
@@ -2536,17 +2595,17 @@ codex_wait_completion_file_response() {
         sleep 1
       done
     fi
-  fi
 
-  # Check result
-  if [ "$wait_result" -ne 0 ]; then
-    codex_debug "wait_file_response: timeout or error (code=$wait_result)"
-    echo "Error: Timeout waiting for Codex response" >&2
-    return 1
-  fi
+    # Check result
+    if [ "$wait_result" -ne 0 ]; then
+      codex_debug "wait_file_response: timeout or error (code=$wait_result)"
+      echo "Error: Timeout waiting for Codex response" >&2
+      return 1
+    fi
 
-  # Small delay to ensure file is fully written
-  sleep 0.5
+    # Small delay to ensure file is fully written
+    sleep 0.5
+  fi
 
   # Read output file
   if [ ! -f "$output_file" ]; then
@@ -2609,7 +2668,15 @@ codex_file_response_workflow() {
   response=$(codex_wait_completion_file_response "$pane_id" "$end_marker" "$output_file" "$wait_timeout")
   local result=$?
 
-  # Cleanup on success
+  # Cleanup augmented prompt file (now that Codex has read it)
+  local augmented_file
+  augmented_file=$(codex_state_get "current_augmented_file")
+  if [ -n "$augmented_file" ] && [ -f "$augmented_file" ]; then
+    rm -f "$augmented_file"
+    codex_state_set "current_augmented_file" ""
+  fi
+
+  # Cleanup output file on success
   if [ $result -eq 0 ]; then
     codex_cleanup_output_file "$output_file"
   fi

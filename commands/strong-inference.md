@@ -307,6 +307,8 @@ HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 [ -f "$HELPERS" ] && source "$HELPERS"
 
 TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+SI_DIR="$TMP_DIR/strong-inference"
+mkdir -p "$SI_DIR"
 PANE_ID_FILE="$TMP_DIR/codex-pane-id"
 SANDBOX="read-only"
 HYPOTHESIS_PROMPT="$TMP_DIR/strong-inference-hypothesis-prompt.txt"
@@ -357,15 +359,17 @@ echo "Using Codex pane: $CODEX_PANE"
 # Use file-based response workflow if available (recommended)
 WAIT_TIMEOUT="${CODEX_WAIT_TIMEOUT:-180}"
 USE_FILE_WORKFLOW=false
+PROMPT_SENT=false
 
 if type codex_file_response_workflow &>/dev/null; then
   echo "Using file-based response protocol..."
-  USE_FILE_WORKFLOW=true
 
   RESPONSE=$(codex_file_response_workflow "$CODEX_PANE" "$HYPOTHESIS_PROMPT" "$WAIT_TIMEOUT")
   WORKFLOW_RESULT=$?
+  PROMPT_SENT=true  # Prompt was sent regardless of success/failure
 
   if [ $WORKFLOW_RESULT -eq 0 ]; then
+    USE_FILE_WORKFLOW=true
     # Save response to output file
     SI_OUTPUT_FILE="$SI_DIR/${TASK_ID}-codex-response.md"
     echo "$RESPONSE" > "$SI_OUTPUT_FILE"
@@ -382,13 +386,14 @@ SI_OUTPUT_FILE=$SI_OUTPUT_FILE
 EOF
     echo "State saved to: $SI_STATE_FILE"
   else
-    echo "Warning: File-based workflow returned code $WORKFLOW_RESULT, falling back to legacy"
-    USE_FILE_WORKFLOW=false
+    echo "Warning: File-based workflow returned code $WORKFLOW_RESULT"
+    echo "Prompt was already sent. Falling back to capture-pane for response retrieval."
+    USE_LEGACY_CAPTURE=true
   fi
 fi
 
-# Legacy fallback: chunked prompt + capture-pane
-if [ "$USE_FILE_WORKFLOW" = "false" ]; then
+# Legacy fallback: only used when file-based workflow is NOT available
+if [ "$PROMPT_SENT" = "false" ]; then
   # Capture state before sending
   BEFORE_CONTENT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
   if type codex_hash_content &>/dev/null; then
@@ -468,7 +473,7 @@ fi
 source "$SI_STATE_FILE"
 echo "Loaded state for task: $TASK_ID"
 
-# Check if file-based workflow was used
+# Check if file-based workflow was used and succeeded
 HYPOTHESIS_OUTPUT="$TMP_DIR/strong-inference-hypothesis-output.md"
 
 if [ "$USE_FILE_WORKFLOW" = "true" ] && [ -n "$SI_OUTPUT_FILE" ] && [ -f "$SI_OUTPUT_FILE" ]; then
@@ -476,25 +481,28 @@ if [ "$USE_FILE_WORKFLOW" = "true" ] && [ -n "$SI_OUTPUT_FILE" ] && [ -f "$SI_OU
   cp "$SI_OUTPUT_FILE" "$HYPOTHESIS_OUTPUT"
   echo "Output available at: $HYPOTHESIS_OUTPUT"
 else
-  # Legacy: Wait for response via capture-pane
+  # Need to wait and capture via pane
+  # This handles both legacy prompt sending and USE_LEGACY_CAPTURE (file-based sent but failed to get response)
   WAIT_TIMEOUT=180
 
   if type codex_wait_completion &>/dev/null; then
     CODEX_WAIT_TIMEOUT="$WAIT_TIMEOUT"
-    codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
+    # END_MARKER may not be set if USE_LEGACY_CAPTURE - will rely on idle detection
+    codex_wait_completion "$CODEX_PANE" "${END_MARKER:-}" "${BEFORE_HASH:-}"
   else
     # Inline fallback: poll for marker or idle
     COMPLETED=false
     POLL_INTERVAL=2
     IDLE_THRESHOLD=5
     IDLE_COUNT=0
-    LAST_HASH="$BEFORE_HASH"
+    LAST_HASH="${BEFORE_HASH:-}"
 
     for i in $(seq 1 $((WAIT_TIMEOUT / POLL_INTERVAL))); do
       CURRENT_OUTPUT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
       CURRENT_HASH=$(echo "$CURRENT_OUTPUT" | md5sum 2>/dev/null | awk '{print $1}')
 
-      if echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
+      # Check for marker if set
+      if [ -n "${END_MARKER:-}" ] && echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
         echo "Codex response completed (marker found)"
         COMPLETED=true
         break

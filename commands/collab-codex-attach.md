@@ -283,12 +283,14 @@ fi
 # Use file-based response workflow if available (recommended)
 WAIT_TIMEOUT="${CODEX_WAIT_TIMEOUT:-180}"
 OUTPUT_FILE="$TMP_DIR/codex-attach-output.md"
+PROMPT_SENT=false
 
 if type codex_file_response_workflow &>/dev/null; then
   echo "Using file-based response protocol..."
 
   RESPONSE=$(codex_file_response_workflow "$CODEX_PANE" "$PROMPT_FILE" "$WAIT_TIMEOUT")
   WORKFLOW_RESULT=$?
+  PROMPT_SENT=true  # Prompt was sent regardless of success/failure
 
   if [ $WORKFLOW_RESULT -eq 0 ]; then
     echo "$RESPONSE" > "$OUTPUT_FILE"
@@ -296,14 +298,15 @@ if type codex_file_response_workflow &>/dev/null; then
     # Skip Step 5 wait, proceed directly to output
     SKIP_WAIT=true
   else
-    echo "Warning: File-based workflow returned code $WORKFLOW_RESULT, falling back to legacy"
-    USE_LEGACY=true
+    echo "Warning: File-based workflow returned code $WORKFLOW_RESULT"
+    echo "Prompt was already sent. Falling back to capture-pane for response retrieval."
+    USE_LEGACY_CAPTURE=true
   fi
 else
   USE_LEGACY=true
 fi
 
-# Legacy fallback: file-based prompt sending + capture-pane
+# Legacy fallback: only used when file-based workflow is NOT available
 if [ "${USE_LEGACY:-}" = "true" ]; then
   if type codex_send_prompt_file &>/dev/null; then
     END_MARKER=$(codex_send_prompt_file "$CODEX_PANE" "$PROMPT_FILE")
@@ -342,19 +345,24 @@ fi
 
 ### Step 5: Wait for Response
 
-> **Note:** If you used the **file-based response protocol** in Step 4 (i.e., `codex_file_response_workflow`), the response is already received. **Skip this step** and proceed to Step 6.
+> **Note:** If you used the **file-based response protocol** in Step 4 (i.e., `codex_file_response_workflow`) and it succeeded, the response is already received. **Skip this step** and proceed to Step 6.
+>
+> If the file-based workflow **failed after sending** (USE_LEGACY_CAPTURE=true), this step will wait for completion and capture via pane (no re-send).
 
-Poll for completion using the unique marker or hash-based change detection (legacy method):
+Poll for completion using the unique marker or hash-based change detection:
 
 ```bash
-# Skip if file-based workflow already completed
+# Skip if file-based workflow already completed successfully
 if [ "${SKIP_WAIT:-}" = "true" ]; then
   echo "Response already received via file-based workflow, skipping wait"
 else
-  # Use helper or inline fallback for completion detection
+  # Need to wait and capture via pane
+  # This handles both USE_LEGACY (prompt sent via chunked) and USE_LEGACY_CAPTURE (prompt sent via file-based but failed to get response)
+
   if type codex_wait_completion &>/dev/null; then
     CODEX_WAIT_TIMEOUT=180
-    codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
+    # END_MARKER may not be set if USE_LEGACY_CAPTURE - will rely on idle detection
+    codex_wait_completion "$CODEX_PANE" "${END_MARKER:-}" "${BEFORE_HASH:-}"
   else
     # Inline fallback
     WAIT_TIMEOUT=180
@@ -362,14 +370,15 @@ else
     IDLE_THRESHOLD=5
     COMPLETED=false
     IDLE_COUNT=0
-    LAST_HASH="$BEFORE_HASH"
+    LAST_HASH="${BEFORE_HASH:-}"
 
     echo "Waiting for Codex response..."
     for i in $(seq 1 $((WAIT_TIMEOUT / POLL_INTERVAL))); do
       CURRENT_OUTPUT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
       CURRENT_HASH=$(echo "$CURRENT_OUTPUT" | md5sum 2>/dev/null | awk '{print $1}' || md5)
 
-      if echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
+      # Check for marker if set
+      if [ -n "${END_MARKER:-}" ] && echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
         echo "Codex response completed (marker found)"
         COMPLETED=true
         break
@@ -378,7 +387,7 @@ else
       if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
         IDLE_COUNT=$((IDLE_COUNT + 1))
         if [ "$IDLE_COUNT" -ge "$IDLE_THRESHOLD" ]; then
-          if echo "$CURRENT_OUTPUT" | tail -3 | grep -qE '^>\s*$|^codex>\s*$|^\[codex\]'; then
+          if echo "$CURRENT_OUTPUT" | tail -3 | grep -qE '^>\s*$|^codex>\s*$|^\[codex\]|^\s*›'; then
             echo "Codex appears idle at prompt"
             COMPLETED=true
             break
@@ -403,13 +412,20 @@ fi
 Extract the new output:
 
 ```bash
-# Use helper or inline for capture
-if type codex_capture_output &>/dev/null; then
-  codex_capture_output "$CODEX_PANE" "$CAPTURE_FILE"
+# If file-based workflow was used, OUTPUT_FILE already has the response
+if [ "${SKIP_WAIT:-}" = "true" ] && [ -f "$OUTPUT_FILE" ] && [ -s "$OUTPUT_FILE" ]; then
+  # File-based workflow: copy output to capture file for consistency
+  cp "$OUTPUT_FILE" "$CAPTURE_FILE"
+  echo "Response extracted from file-based workflow: $CAPTURE_FILE"
 else
-  tmux capture-pane -t "$CODEX_PANE" -p -S -5000 > "$CAPTURE_FILE"
+  # Legacy: use capture-pane
+  if type codex_capture_output &>/dev/null; then
+    codex_capture_output "$CODEX_PANE" "$CAPTURE_FILE"
+  else
+    tmux capture-pane -t "$CODEX_PANE" -p -S -5000 > "$CAPTURE_FILE"
+  fi
+  echo "Response captured from pane: $CAPTURE_FILE"
 fi
-echo "Response captured to: $CAPTURE_FILE"
 ```
 
 ### Step 7: Process Response
