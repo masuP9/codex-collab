@@ -663,8 +663,30 @@ When finished, output exactly: ${end_marker}"
   # Send using chunked method
   codex_send_chunked "$pane_id" "$full_prompt"
 
-  # Wait a moment for chunks to be processed, then send Enter
-  sleep 0.1
+  # Wait for chunks to be processed by checking if prompt tail appears in pane
+  # Use byte-based comparison with LC_ALL=C to avoid UTF-8 multibyte issues
+  local tail_check
+  tail_check=$(printf '%s' "$full_prompt" | LC_ALL=C tail -c 64)  # Last 64 bytes
+  local paste_timeout=60  # 60 * 0.05 = 3s max wait
+  local tail_out=""
+  local paste_complete=false
+
+  codex_debug "send_prompt_chunked: waiting for prompt tail (${#tail_check} bytes)"
+
+  for _ in $(seq 1 $paste_timeout); do
+    tail_out=$("${tmux_cmd[@]}" capture-pane -t "$pane_id" -p -S -8 2>/dev/null)
+    if printf '%s' "$tail_out" | LC_ALL=C grep -qF "$tail_check"; then
+      paste_complete=true
+      break
+    fi
+    sleep 0.05
+  done
+
+  if [ "$paste_complete" = false ]; then
+    codex_debug "send_prompt_chunked: WARNING - tail check timeout after 3s, proceeding anyway"
+  fi
+
+  # Send Enter only after tail appears (or timeout)
   "${tmux_cmd[@]}" send-keys -t "$pane_id" Enter
 
   codex_debug "send_prompt_chunked: Enter sent, marker: $end_marker"
@@ -2076,4 +2098,522 @@ codex_get_or_create_pane() {
     echo "Error: Failed to launch Codex pane" >&2
     return 1
   fi
+}
+
+# ==============================================================================
+# State Management Functions
+# ==============================================================================
+#
+# Functions to manage persistent state in .claude/codex-state.json
+# This state survives context compaction and session restarts.
+#
+
+# State file location (relative to project root)
+: "${CODEX_STATE_FILE:=.claude/codex-state.json}"
+
+# Ensure state directory and file exist
+# Usage: codex_ensure_state_file
+# Returns: Path to state file
+codex_ensure_state_file() {
+  local state_file="${CODEX_STATE_FILE:-.claude/codex-state.json}"
+  local state_dir
+  state_dir=$(dirname "$state_file")
+
+  if [ ! -d "$state_dir" ]; then
+    mkdir -p "$state_dir"
+  fi
+
+  if [ ! -f "$state_file" ]; then
+    echo '{}' > "$state_file"
+  fi
+
+  echo "$state_file"
+}
+
+# Set a value in the state file
+# Usage: codex_state_set "key" "value"
+# Returns: 0 on success, 1 on error
+# Note: Requires jq for JSON manipulation
+codex_state_set() {
+  local key="$1"
+  local value="$2"
+
+  if [ -z "$key" ]; then
+    codex_debug "state_set: key is required"
+    return 1
+  fi
+
+  local state_file
+  state_file=$(codex_ensure_state_file)
+
+  # Check for jq
+  if ! command -v jq &>/dev/null; then
+    codex_debug "state_set: jq not found, falling back to simple key=value"
+    # Fallback: use simple sed-based replacement (limited but works for simple cases)
+    if grep -q "\"$key\":" "$state_file" 2>/dev/null; then
+      sed -i.bak "s|\"$key\":\"[^\"]*\"|\"$key\":\"$value\"|" "$state_file"
+      rm -f "${state_file}.bak"
+    else
+      # Add new key (simple append before closing brace)
+      sed -i.bak "s|}$|,\"$key\":\"$value\"}|" "$state_file"
+      # Fix if it was empty object
+      sed -i.bak 's/^{,/{"/' "$state_file"
+      rm -f "${state_file}.bak"
+    fi
+    return 0
+  fi
+
+  # Use jq for proper JSON manipulation
+  local tmp_file="${state_file}.tmp.$$"
+  if jq --arg k "$key" --arg v "$value" '.[$k]=$v' "$state_file" > "$tmp_file" 2>/dev/null; then
+    mv "$tmp_file" "$state_file"
+    codex_debug "state_set: $key = $value"
+    return 0
+  else
+    rm -f "$tmp_file"
+    codex_debug "state_set: failed to update $key"
+    return 1
+  fi
+}
+
+# Get a value from the state file
+# Usage: value=$(codex_state_get "key")
+# Returns: Value on stdout if found, exit code 0
+#          Empty and exit code 1 if not found or error
+codex_state_get() {
+  local key="$1"
+  local state_file="${CODEX_STATE_FILE:-.claude/codex-state.json}"
+
+  if [ ! -f "$state_file" ]; then
+    codex_debug "state_get: state file not found"
+    return 1
+  fi
+
+  # Check for jq
+  if ! command -v jq &>/dev/null; then
+    codex_debug "state_get: jq not found, falling back to grep"
+    # Fallback: simple grep-based extraction
+    local value
+    value=$(grep -o "\"$key\":\"[^\"]*\"" "$state_file" 2>/dev/null | sed 's/.*:"\([^"]*\)"/\1/')
+    if [ -n "$value" ]; then
+      echo "$value"
+      return 0
+    fi
+    return 1
+  fi
+
+  # Use jq for proper JSON parsing
+  local value
+  value=$(jq -r --arg k "$key" '.[$k] // empty' "$state_file" 2>/dev/null)
+
+  if [ -n "$value" ]; then
+    codex_debug "state_get: $key = $value"
+    echo "$value"
+    return 0
+  else
+    codex_debug "state_get: $key not found"
+    return 1
+  fi
+}
+
+# Delete a key from the state file
+# Usage: codex_state_delete "key"
+# Returns: 0 on success, 1 on error
+codex_state_delete() {
+  local key="$1"
+  local state_file="${CODEX_STATE_FILE:-.claude/codex-state.json}"
+
+  if [ ! -f "$state_file" ]; then
+    return 0  # Nothing to delete
+  fi
+
+  if ! command -v jq &>/dev/null; then
+    codex_debug "state_delete: jq not found, cannot delete key"
+    return 1
+  fi
+
+  local tmp_file="${state_file}.tmp.$$"
+  if jq --arg k "$key" 'del(.[$k])' "$state_file" > "$tmp_file" 2>/dev/null; then
+    mv "$tmp_file" "$state_file"
+    codex_debug "state_delete: deleted $key"
+    return 0
+  else
+    rm -f "$tmp_file"
+    return 1
+  fi
+}
+
+# Update last_updated timestamp in state
+# Usage: codex_state_touch
+codex_state_touch() {
+  local timestamp
+  timestamp=$(date -Iseconds 2>/dev/null || date +"%Y-%m-%dT%H:%M:%S%z")
+  codex_state_set "last_updated" "$timestamp"
+}
+
+# ==============================================================================
+# Output File Management
+# ==============================================================================
+#
+# Functions to manage unique output files for Codex responses.
+# Each prompt generates a unique output file to prevent reading stale responses.
+#
+
+# Generate a unique output file path
+# Usage: output_file=$(codex_generate_output_file [prefix])
+# Arguments:
+#   prefix - Optional prefix (default: "response")
+# Returns: Unique file path like tmp/codex-response-20260202-153045-8f3c2a.md
+codex_generate_output_file() {
+  local prefix="${1:-response}"
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+
+  # Generate timestamp
+  local ts
+  ts=$(date +"%Y%m%d-%H%M%S")
+
+  # Generate random suffix (6 hex chars)
+  local rand
+  if [ -r /dev/urandom ]; then
+    rand=$(LC_ALL=C tr -dc 'a-f0-9' </dev/urandom 2>/dev/null | head -c 6)
+  else
+    # Fallback using $RANDOM
+    rand=$(printf '%04x%02x' $RANDOM $((RANDOM % 256)))
+  fi
+
+  local path="${tmp_dir}/codex-${prefix}-${ts}-${rand}.md"
+
+  codex_debug "generate_output_file: $path"
+  echo "$path"
+}
+
+# Register current output file in state
+# Usage: codex_register_output_file "/path/to/output.md"
+# Also stores in state for recovery after context compaction
+codex_register_output_file() {
+  local output_file="$1"
+
+  if [ -z "$output_file" ]; then
+    return 1
+  fi
+
+  codex_state_set "current_output_file" "$output_file"
+  codex_state_touch
+
+  codex_debug "register_output_file: $output_file"
+}
+
+# Get current output file from state
+# Usage: output_file=$(codex_get_current_output_file)
+codex_get_current_output_file() {
+  codex_state_get "current_output_file"
+}
+
+# Cleanup output file after successful read
+# Usage: codex_cleanup_output_file [file_path]
+# If file_path not provided, uses current_output_file from state
+# Returns: 0 on success, 1 on error
+codex_cleanup_output_file() {
+  local file_path="${1:-}"
+
+  # If no path provided, get from state
+  if [ -z "$file_path" ]; then
+    file_path=$(codex_get_current_output_file)
+  fi
+
+  if [ -z "$file_path" ]; then
+    codex_debug "cleanup_output_file: no file to clean up"
+    return 0
+  fi
+
+  if [ -f "$file_path" ]; then
+    rm -f "$file_path"
+    codex_debug "cleanup_output_file: deleted $file_path"
+  fi
+
+  # Clear from state
+  codex_state_delete "current_output_file"
+
+  return 0
+}
+
+# Cleanup old output files (files older than specified hours)
+# Usage: codex_cleanup_old_outputs [hours]
+# Default: 24 hours
+codex_cleanup_old_outputs() {
+  local hours="${1:-24}"
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+
+  # Find and delete old codex-response files
+  find "$tmp_dir" -name "codex-response-*.md" -mmin +$((hours * 60)) -delete 2>/dev/null
+  find "$tmp_dir" -name "codex-*.md" -mmin +$((hours * 60)) -delete 2>/dev/null
+
+  codex_debug "cleanup_old_outputs: cleaned files older than ${hours}h"
+}
+
+# ==============================================================================
+# File-Based Response Protocol
+# ==============================================================================
+#
+# Functions for the new file-based response protocol where Codex writes
+# responses to a file instead of stdout, improving reliability for long responses.
+#
+
+# Build a prompt with file output instructions
+# Usage: full_prompt=$(codex_build_file_output_prompt "$original_prompt" "$output_file" "$end_marker")
+# Arguments:
+#   original_prompt - The original prompt content
+#   output_file     - Path where Codex should write the response
+#   end_marker      - Completion marker to output on stdout
+# Returns: Combined prompt with file output instructions appended
+codex_build_file_output_prompt() {
+  local original_prompt="$1"
+  local output_file="$2"
+  local end_marker="$3"
+
+  if [ -z "$output_file" ] || [ -z "$end_marker" ]; then
+    codex_debug "build_file_output_prompt: output_file and end_marker required"
+    echo "$original_prompt"
+    return 1
+  fi
+
+  cat << EOF
+${original_prompt}
+
+---
+
+## Output Instructions (REQUIRED)
+
+Write your complete response to the following file:
+**FILE:** \`${output_file}\`
+
+After writing the file, output ONLY the following completion marker to stdout (one line):
+\`\`\`
+${end_marker}
+\`\`\`
+
+**Constraints:**
+- Write ALL response content to the file, not stdout
+- stdout should contain ONLY the completion marker
+- Even if an error occurs, output the completion marker
+
+---
+status: stop
+---
+EOF
+}
+
+# Send prompt with file output instructions to Codex
+# Usage: codex_send_prompt_file_output "$pane_id" "$prompt_file" "$output_file" "$end_marker"
+# Arguments:
+#   pane_id     - Target Codex pane
+#   prompt_file - File containing the original prompt (will be read and augmented)
+#   output_file - Path where Codex should write the response
+#   end_marker  - Completion marker (optional, will be generated if not provided)
+# Returns: End marker on stdout
+# Side effects:
+#   - Registers output_file in state
+#   - Creates augmented prompt file
+codex_send_prompt_file_output() {
+  local pane_id="$1"
+  local prompt_file="$2"
+  local output_file="$3"
+  local end_marker="${4:-}"
+
+  # Generate end marker if not provided
+  if [ -z "$end_marker" ]; then
+    end_marker="<<RESPONSE_END_$(date +%s)-$$>>"
+  fi
+
+  # Generate output file if not provided
+  if [ -z "$output_file" ]; then
+    output_file=$(codex_generate_output_file)
+  fi
+
+  codex_debug "send_prompt_file_output: output=$output_file marker=$end_marker"
+
+  # Read original prompt
+  local original_prompt
+  if [ -f "$prompt_file" ]; then
+    original_prompt=$(cat "$prompt_file")
+  else
+    original_prompt="$prompt_file"  # Treat as inline prompt
+  fi
+
+  # Build augmented prompt
+  local augmented_prompt
+  augmented_prompt=$(codex_build_file_output_prompt "$original_prompt" "$output_file" "$end_marker")
+
+  # Create temp file with augmented prompt
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+  local augmented_file="${tmp_dir}/codex-augmented-prompt-$$.txt"
+  echo "$augmented_prompt" > "$augmented_file"
+
+  # Register output file in state
+  codex_register_output_file "$output_file"
+  codex_state_set "current_end_marker" "$end_marker"
+  codex_state_set "current_prompt_file" "$prompt_file"
+
+  # Send using existing file-based method
+  if type codex_send_prompt_file &>/dev/null; then
+    codex_send_prompt_file "$pane_id" "$augmented_file" "$end_marker"
+  else
+    # Fallback: direct send
+    local tmux_cmd=(tmux)
+    if [ -n "${CODEX_TMUX_SOCKET:-}" ]; then
+      tmux_cmd=(tmux -S "$CODEX_TMUX_SOCKET")
+    fi
+
+    "${tmux_cmd[@]}" send-keys -t "$pane_id" C-u
+    sleep 0.1
+
+    local short_prompt="Please read and follow the instructions in: $augmented_file
+
+When done, output exactly: $end_marker"
+
+    local buffer_file="${tmp_dir}/codex-buffer-$$.txt"
+    echo "$short_prompt" > "$buffer_file"
+    "${tmux_cmd[@]}" load-buffer "$buffer_file"
+    "${tmux_cmd[@]}" paste-buffer -t "$pane_id"
+    sleep 0.5
+    "${tmux_cmd[@]}" send-keys -t "$pane_id" Enter
+    rm -f "$buffer_file"
+  fi
+
+  # Cleanup temp file
+  rm -f "$augmented_file"
+
+  echo "$end_marker"
+}
+
+# Wait for completion and read file-based response
+# Usage: response=$(codex_wait_completion_file_response "$pane_id" "$end_marker" "$output_file" [timeout])
+# Arguments:
+#   pane_id     - Target Codex pane
+#   end_marker  - Completion marker to wait for
+#   output_file - Path where Codex wrote the response
+#   timeout     - Optional timeout in seconds (default: CODEX_WAIT_TIMEOUT)
+# Returns: Response content on stdout
+# Exit codes:
+#   0 - Success, response read
+#   1 - Timeout
+#   2 - Output file not found or empty
+codex_wait_completion_file_response() {
+  local pane_id="$1"
+  local end_marker="$2"
+  local output_file="$3"
+  local wait_timeout="${4:-${CODEX_WAIT_TIMEOUT:-180}}"
+
+  codex_debug "wait_file_response: pane=$pane_id marker=$end_marker file=$output_file timeout=${wait_timeout}s"
+
+  # Use event-driven wait if available
+  local wait_result=1
+  if type codex_wait_completion_evented &>/dev/null; then
+    codex_debug "wait_file_response: using event-driven wait"
+    CODEX_WAIT_TIMEOUT="$wait_timeout"
+    codex_wait_completion_evented "$pane_id" "$end_marker"
+    wait_result=$?
+  else
+    # Fallback to polling
+    codex_debug "wait_file_response: using polling wait"
+    local before_hash=""
+    if type codex_wait_completion_polling &>/dev/null; then
+      codex_wait_completion_polling "$pane_id" "$end_marker" "$before_hash"
+      wait_result=$?
+    else
+      # Simple inline polling
+      for i in $(seq 1 "$wait_timeout"); do
+        local current_output
+        current_output=$(tmux capture-pane -t "$pane_id" -p -S -5000 2>/dev/null)
+        if echo "$current_output" | grep -qF "$end_marker"; then
+          codex_debug "wait_file_response: marker found after ${i}s"
+          wait_result=0
+          break
+        fi
+        sleep 1
+      done
+    fi
+  fi
+
+  # Check result
+  if [ "$wait_result" -ne 0 ]; then
+    codex_debug "wait_file_response: timeout or error (code=$wait_result)"
+    echo "Error: Timeout waiting for Codex response" >&2
+    return 1
+  fi
+
+  # Small delay to ensure file is fully written
+  sleep 0.5
+
+  # Read output file
+  if [ ! -f "$output_file" ]; then
+    codex_debug "wait_file_response: output file not found: $output_file"
+    echo "Error: Output file not found: $output_file" >&2
+
+    # Fallback: try to capture from pane
+    echo "Attempting to capture from pane..." >&2
+    local pane_content
+    pane_content=$(tmux capture-pane -t "$pane_id" -p -S -5000 2>/dev/null)
+    if [ -n "$pane_content" ]; then
+      echo "$pane_content"
+      return 2
+    fi
+    return 2
+  fi
+
+  # Check if file is empty
+  if [ ! -s "$output_file" ]; then
+    codex_debug "wait_file_response: output file is empty"
+    echo "Warning: Output file is empty" >&2
+    return 2
+  fi
+
+  # Read and return file content
+  local response
+  response=$(cat "$output_file")
+  codex_debug "wait_file_response: read $(echo "$response" | wc -l) lines from $output_file"
+
+  echo "$response"
+  return 0
+}
+
+# Complete file-based response workflow
+# Usage: response=$(codex_file_response_workflow "$pane_id" "$prompt_file" [timeout])
+# This is a high-level function that combines:
+#   1. Generate output file and marker
+#   2. Send prompt with file output instructions
+#   3. Wait for completion
+#   4. Read and return response
+#   5. Cleanup
+# Returns: Response content on stdout
+codex_file_response_workflow() {
+  local pane_id="$1"
+  local prompt_file="$2"
+  local wait_timeout="${3:-${CODEX_WAIT_TIMEOUT:-180}}"
+
+  codex_debug "file_response_workflow: pane=$pane_id prompt=$prompt_file"
+
+  # Generate unique output file and marker
+  local output_file
+  output_file=$(codex_generate_output_file)
+  local end_marker="<<RESPONSE_END_$(date +%s)-$$>>"
+
+  # Send prompt with file output instructions
+  codex_send_prompt_file_output "$pane_id" "$prompt_file" "$output_file" "$end_marker"
+
+  # Wait for completion and read response
+  local response
+  response=$(codex_wait_completion_file_response "$pane_id" "$end_marker" "$output_file" "$wait_timeout")
+  local result=$?
+
+  # Cleanup on success
+  if [ $result -eq 0 ]; then
+    codex_cleanup_output_file "$output_file"
+  fi
+
+  echo "$response"
+  return $result
 }
