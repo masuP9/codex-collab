@@ -12,3 +12,6 @@
 
 # Project-specific codex-collab settings (use .example as template)
 .claude/codex-collab.local.md
+
+# Codex state file (session-specific, regenerated as needed)
+.claude/codex-state.json
