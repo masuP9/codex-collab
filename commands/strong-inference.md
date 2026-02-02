@@ -354,55 +354,94 @@ fi
 
 echo "Using Codex pane: $CODEX_PANE"
 
-# Capture state before sending
-BEFORE_CONTENT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
-if type codex_hash_content &>/dev/null; then
-  BEFORE_HASH=$(echo "$BEFORE_CONTENT" | codex_hash_content)
-else
-  BEFORE_HASH=$(echo "$BEFORE_CONTENT" | md5sum 2>/dev/null | awk '{print $1}')
+# Use file-based response workflow if available (recommended)
+WAIT_TIMEOUT="${CODEX_WAIT_TIMEOUT:-180}"
+USE_FILE_WORKFLOW=false
+
+if type codex_file_response_workflow &>/dev/null; then
+  echo "Using file-based response protocol..."
+  USE_FILE_WORKFLOW=true
+
+  RESPONSE=$(codex_file_response_workflow "$CODEX_PANE" "$HYPOTHESIS_PROMPT" "$WAIT_TIMEOUT")
+  WORKFLOW_RESULT=$?
+
+  if [ $WORKFLOW_RESULT -eq 0 ]; then
+    # Save response to output file
+    SI_OUTPUT_FILE="$SI_DIR/${TASK_ID}-codex-response.md"
+    echo "$RESPONSE" > "$SI_OUTPUT_FILE"
+    echo "Response received and saved to: $SI_OUTPUT_FILE"
+
+    # Save state with response file path
+    SI_STATE_FILE="$TMP_DIR/strong-inference-state-${TASK_ID}.env"
+    cat > "$SI_STATE_FILE" << EOF
+TASK_ID=$TASK_ID
+STATE_FILE=$STATE_FILE
+CODEX_PANE=$CODEX_PANE
+USE_FILE_WORKFLOW=true
+SI_OUTPUT_FILE=$SI_OUTPUT_FILE
+EOF
+    echo "State saved to: $SI_STATE_FILE"
+  else
+    echo "Warning: File-based workflow returned code $WORKFLOW_RESULT, falling back to legacy"
+    USE_FILE_WORKFLOW=false
+  fi
 fi
 
-# Send prompt
-MARKER_ID="$(date +%s)-$RANDOM"
-END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
+# Legacy fallback: chunked prompt + capture-pane
+if [ "$USE_FILE_WORKFLOW" = "false" ]; then
+  # Capture state before sending
+  BEFORE_CONTENT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
+  if type codex_hash_content &>/dev/null; then
+    BEFORE_HASH=$(echo "$BEFORE_CONTENT" | codex_hash_content)
+  else
+    BEFORE_HASH=$(echo "$BEFORE_CONTENT" | md5sum 2>/dev/null | awk '{print $1}')
+  fi
 
-if type codex_send_prompt_chunked &>/dev/null; then
-  END_MARKER=$(codex_send_prompt_chunked "$CODEX_PANE" "$(cat "$HYPOTHESIS_PROMPT")")
-else
-  # Inline fallback
-  PROMPT_CONTENT=$(cat "$HYPOTHESIS_PROMPT")
-  FULL_PROMPT="${PROMPT_CONTENT}
+  # Send prompt
+  MARKER_ID="$(date +%s)-$RANDOM"
+  END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
+
+  if type codex_send_prompt_chunked &>/dev/null; then
+    END_MARKER=$(codex_send_prompt_chunked "$CODEX_PANE" "$(cat "$HYPOTHESIS_PROMPT")")
+  else
+    # Inline fallback
+    PROMPT_CONTENT=$(cat "$HYPOTHESIS_PROMPT")
+    FULL_PROMPT="${PROMPT_CONTENT}
 
 When finished, output exactly: ${END_MARKER}"
 
-  tmux send-keys -t "$CODEX_PANE" C-u
-  sleep 0.1
-  TEMP_FILE="$TMP_DIR/codex-prompt-$$"
-  echo "$FULL_PROMPT" > "$TEMP_FILE"
-  tmux load-buffer "$TEMP_FILE"
-  tmux paste-buffer -t "$CODEX_PANE"
-  sleep 0.5
-  tmux send-keys -t "$CODEX_PANE" Enter
-  rm -f "$TEMP_FILE"
-fi
+    tmux send-keys -t "$CODEX_PANE" C-u
+    sleep 0.1
+    TEMP_FILE="$TMP_DIR/codex-prompt-$$"
+    echo "$FULL_PROMPT" > "$TEMP_FILE"
+    tmux load-buffer "$TEMP_FILE"
+    tmux paste-buffer -t "$CODEX_PANE"
+    sleep 0.5
+    tmux send-keys -t "$CODEX_PANE" Enter
+    rm -f "$TEMP_FILE"
+  fi
 
-echo "Prompt sent to Codex pane: $CODEX_PANE"
-echo "Completion marker: $END_MARKER"
-echo "BEFORE_HASH=$BEFORE_HASH"
+  echo "Prompt sent to Codex pane: $CODEX_PANE"
+  echo "Completion marker: $END_MARKER"
+  echo "BEFORE_HASH=$BEFORE_HASH"
 
-# Save state for next step (task-specific to avoid conflicts)
-SI_STATE_FILE="$TMP_DIR/strong-inference-state-${TASK_ID}.env"
-cat > "$SI_STATE_FILE" << EOF
+  # Save state for next step (task-specific to avoid conflicts)
+  SI_STATE_FILE="$TMP_DIR/strong-inference-state-${TASK_ID}.env"
+  cat > "$SI_STATE_FILE" << EOF
 TASK_ID=$TASK_ID
 STATE_FILE=$STATE_FILE
 CODEX_PANE=$CODEX_PANE
 END_MARKER=$END_MARKER
 BEFORE_HASH=$BEFORE_HASH
+USE_FILE_WORKFLOW=false
 EOF
-echo "State saved to: $SI_STATE_FILE"
+  echo "State saved to: $SI_STATE_FILE"
+fi
 ```
 
 3. Wait for Codex response:
+
+> **Note:** If you used the **file-based response protocol** in step 2 (i.e., `codex_file_response_workflow`), the response is already received. Check `USE_FILE_WORKFLOW` in state file and skip waiting if true.
 
 ```bash
 export CODEX_SKILL_CONTEXT=1
@@ -429,53 +468,62 @@ fi
 source "$SI_STATE_FILE"
 echo "Loaded state for task: $TASK_ID"
 
-WAIT_TIMEOUT=180
-
-if type codex_wait_completion &>/dev/null; then
-  CODEX_WAIT_TIMEOUT="$WAIT_TIMEOUT"
-  codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
-else
-  # Inline fallback: poll for marker or idle
-  COMPLETED=false
-  POLL_INTERVAL=2
-  IDLE_THRESHOLD=5
-  IDLE_COUNT=0
-  LAST_HASH="$BEFORE_HASH"
-
-  for i in $(seq 1 $((WAIT_TIMEOUT / POLL_INTERVAL))); do
-    CURRENT_OUTPUT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
-    CURRENT_HASH=$(echo "$CURRENT_OUTPUT" | md5sum 2>/dev/null | awk '{print $1}')
-
-    if echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
-      echo "Codex response completed (marker found)"
-      COMPLETED=true
-      break
-    fi
-
-    if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
-      IDLE_COUNT=$((IDLE_COUNT + 1))
-      if [ "$IDLE_COUNT" -ge "$IDLE_THRESHOLD" ]; then
-        if echo "$CURRENT_OUTPUT" | tail -5 | grep -qE '^\s*›|^>'; then
-          echo "Codex appears idle"
-          COMPLETED=true
-          break
-        fi
-      fi
-    else
-      IDLE_COUNT=0
-      LAST_HASH="$CURRENT_HASH"
-    fi
-
-    sleep $POLL_INTERVAL
-  done
-
-  [ "$COMPLETED" = false ] && echo "Warning: Timeout after ${WAIT_TIMEOUT}s"
-fi
-
-# Capture output
+# Check if file-based workflow was used
 HYPOTHESIS_OUTPUT="$TMP_DIR/strong-inference-hypothesis-output.md"
-tmux capture-pane -t "$CODEX_PANE" -p -S -5000 > "$HYPOTHESIS_OUTPUT"
-echo "Output captured to: $HYPOTHESIS_OUTPUT"
+
+if [ "$USE_FILE_WORKFLOW" = "true" ] && [ -n "$SI_OUTPUT_FILE" ] && [ -f "$SI_OUTPUT_FILE" ]; then
+  echo "Response already received via file-based workflow"
+  cp "$SI_OUTPUT_FILE" "$HYPOTHESIS_OUTPUT"
+  echo "Output available at: $HYPOTHESIS_OUTPUT"
+else
+  # Legacy: Wait for response via capture-pane
+  WAIT_TIMEOUT=180
+
+  if type codex_wait_completion &>/dev/null; then
+    CODEX_WAIT_TIMEOUT="$WAIT_TIMEOUT"
+    codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
+  else
+    # Inline fallback: poll for marker or idle
+    COMPLETED=false
+    POLL_INTERVAL=2
+    IDLE_THRESHOLD=5
+    IDLE_COUNT=0
+    LAST_HASH="$BEFORE_HASH"
+
+    for i in $(seq 1 $((WAIT_TIMEOUT / POLL_INTERVAL))); do
+      CURRENT_OUTPUT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
+      CURRENT_HASH=$(echo "$CURRENT_OUTPUT" | md5sum 2>/dev/null | awk '{print $1}')
+
+      if echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
+        echo "Codex response completed (marker found)"
+        COMPLETED=true
+        break
+      fi
+
+      if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
+        IDLE_COUNT=$((IDLE_COUNT + 1))
+        if [ "$IDLE_COUNT" -ge "$IDLE_THRESHOLD" ]; then
+          if echo "$CURRENT_OUTPUT" | tail -5 | grep -qE '^\s*›|^>'; then
+            echo "Codex appears idle"
+            COMPLETED=true
+            break
+          fi
+        fi
+      else
+        IDLE_COUNT=0
+        LAST_HASH="$CURRENT_HASH"
+      fi
+
+      sleep $POLL_INTERVAL
+    done
+
+    [ "$COMPLETED" = false ] && echo "Warning: Timeout after ${WAIT_TIMEOUT}s"
+  fi
+
+  # Capture output
+  tmux capture-pane -t "$CODEX_PANE" -p -S -5000 > "$HYPOTHESIS_OUTPUT"
+  echo "Output captured to: $HYPOTHESIS_OUTPUT"
+fi
 ```
 
 4. Parse hypotheses from response and update state file:

@@ -280,36 +280,61 @@ PROMPT_EOF
   echo "Using lightweight template (continuing session, turn $TURN_COUNT)"
 fi
 
-# Use file-based prompt sending (avoids paste-buffer issues with long prompts)
-if type codex_send_prompt_file &>/dev/null; then
-  END_MARKER=$(codex_send_prompt_file "$CODEX_PANE" "$PROMPT_FILE")
-  echo "Prompt sent to Codex pane: $CODEX_PANE"
-  echo "Completion marker: $END_MARKER"
+# Use file-based response workflow if available (recommended)
+WAIT_TIMEOUT="${CODEX_WAIT_TIMEOUT:-180}"
+OUTPUT_FILE="$TMP_DIR/codex-attach-output.md"
+
+if type codex_file_response_workflow &>/dev/null; then
+  echo "Using file-based response protocol..."
+
+  RESPONSE=$(codex_file_response_workflow "$CODEX_PANE" "$PROMPT_FILE" "$WAIT_TIMEOUT")
+  WORKFLOW_RESULT=$?
+
+  if [ $WORKFLOW_RESULT -eq 0 ]; then
+    echo "$RESPONSE" > "$OUTPUT_FILE"
+    echo "Response received and saved to $OUTPUT_FILE"
+    # Skip Step 5 wait, proceed directly to output
+    SKIP_WAIT=true
+  else
+    echo "Warning: File-based workflow returned code $WORKFLOW_RESULT, falling back to legacy"
+    USE_LEGACY=true
+  fi
 else
-  # Inline fallback: Send short reference prompt instead of full content
-  MARKER_ID="$(date +%s)-$RANDOM"
-  END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
+  USE_LEGACY=true
+fi
 
-  # Clear any existing input first
-  tmux send-keys -t "$CODEX_PANE" C-u
-  sleep 0.1
+# Legacy fallback: file-based prompt sending + capture-pane
+if [ "${USE_LEGACY:-}" = "true" ]; then
+  if type codex_send_prompt_file &>/dev/null; then
+    END_MARKER=$(codex_send_prompt_file "$CODEX_PANE" "$PROMPT_FILE")
+    echo "Prompt sent to Codex pane: $CODEX_PANE"
+    echo "Completion marker: $END_MARKER"
+  else
+    # Inline fallback: Send short reference prompt instead of full content
+    MARKER_ID="$(date +%s)-$RANDOM"
+    END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
 
-  # Create short reference prompt
-  TEMP_PROMPT="$TMP_DIR/codex-prompt-$$"
-  cat > "$TEMP_PROMPT" << EOF
+    # Clear any existing input first
+    tmux send-keys -t "$CODEX_PANE" C-u
+    sleep 0.1
+
+    # Create short reference prompt
+    TEMP_PROMPT="$TMP_DIR/codex-prompt-$$"
+    cat > "$TEMP_PROMPT" << EOF
 Please read the instructions in ${PROMPT_FILE} and follow them.
 
 ---
 IMPORTANT: After completing your response, output this exact marker on its own line:
 ${END_MARKER}
 EOF
-  tmux load-buffer "$TEMP_PROMPT"
-  tmux paste-buffer -t "$CODEX_PANE"
-  sleep 0.5
-  tmux send-keys -t "$CODEX_PANE" Enter
-  rm -f "$TEMP_PROMPT"
-  echo "Prompt sent to Codex pane: $CODEX_PANE"
-  echo "Completion marker: $END_MARKER"
+    tmux load-buffer "$TEMP_PROMPT"
+    tmux paste-buffer -t "$CODEX_PANE"
+    sleep 0.5
+    tmux send-keys -t "$CODEX_PANE" Enter
+    rm -f "$TEMP_PROMPT"
+    echo "Prompt sent to Codex pane: $CODEX_PANE"
+    echo "Completion marker: $END_MARKER"
+  fi
 fi
 ```
 
@@ -317,51 +342,58 @@ fi
 
 ### Step 5: Wait for Response
 
-Poll for completion using the unique marker or hash-based change detection:
+> **Note:** If you used the **file-based response protocol** in Step 4 (i.e., `codex_file_response_workflow`), the response is already received. **Skip this step** and proceed to Step 6.
+
+Poll for completion using the unique marker or hash-based change detection (legacy method):
 
 ```bash
-# Use helper or inline fallback for completion detection
-if type codex_wait_completion &>/dev/null; then
-  CODEX_WAIT_TIMEOUT=180
-  codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
+# Skip if file-based workflow already completed
+if [ "${SKIP_WAIT:-}" = "true" ]; then
+  echo "Response already received via file-based workflow, skipping wait"
 else
-  # Inline fallback
-  WAIT_TIMEOUT=180
-  POLL_INTERVAL=2
-  IDLE_THRESHOLD=5
-  COMPLETED=false
-  IDLE_COUNT=0
-  LAST_HASH="$BEFORE_HASH"
+  # Use helper or inline fallback for completion detection
+  if type codex_wait_completion &>/dev/null; then
+    CODEX_WAIT_TIMEOUT=180
+    codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
+  else
+    # Inline fallback
+    WAIT_TIMEOUT=180
+    POLL_INTERVAL=2
+    IDLE_THRESHOLD=5
+    COMPLETED=false
+    IDLE_COUNT=0
+    LAST_HASH="$BEFORE_HASH"
 
-  echo "Waiting for Codex response..."
-  for i in $(seq 1 $((WAIT_TIMEOUT / POLL_INTERVAL))); do
-    CURRENT_OUTPUT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
-    CURRENT_HASH=$(echo "$CURRENT_OUTPUT" | md5sum 2>/dev/null | awk '{print $1}' || md5)
+    echo "Waiting for Codex response..."
+    for i in $(seq 1 $((WAIT_TIMEOUT / POLL_INTERVAL))); do
+      CURRENT_OUTPUT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
+      CURRENT_HASH=$(echo "$CURRENT_OUTPUT" | md5sum 2>/dev/null | awk '{print $1}' || md5)
 
-    if echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
-      echo "Codex response completed (marker found)"
-      COMPLETED=true
-      break
-    fi
-
-    if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
-      IDLE_COUNT=$((IDLE_COUNT + 1))
-      if [ "$IDLE_COUNT" -ge "$IDLE_THRESHOLD" ]; then
-        if echo "$CURRENT_OUTPUT" | tail -3 | grep -qE '^>\s*$|^codex>\s*$|^\[codex\]'; then
-          echo "Codex appears idle at prompt"
-          COMPLETED=true
-          break
-        fi
+      if echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
+        echo "Codex response completed (marker found)"
+        COMPLETED=true
+        break
       fi
-    else
-      IDLE_COUNT=0
-      LAST_HASH="$CURRENT_HASH"
-    fi
-    sleep $POLL_INTERVAL
-  done
 
-  if [ "$COMPLETED" = false ]; then
-    echo "Warning: Timeout after ${WAIT_TIMEOUT}s - use '/collab-attach capture' to check"
+      if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
+        IDLE_COUNT=$((IDLE_COUNT + 1))
+        if [ "$IDLE_COUNT" -ge "$IDLE_THRESHOLD" ]; then
+          if echo "$CURRENT_OUTPUT" | tail -3 | grep -qE '^>\s*$|^codex>\s*$|^\[codex\]'; then
+            echo "Codex appears idle at prompt"
+            COMPLETED=true
+            break
+          fi
+        fi
+      else
+        IDLE_COUNT=0
+        LAST_HASH="$CURRENT_HASH"
+      fi
+      sleep $POLL_INTERVAL
+    done
+
+    if [ "$COMPLETED" = false ]; then
+      echo "Warning: Timeout after ${WAIT_TIMEOUT}s - use '/collab-attach capture' to check"
+    fi
   fi
 fi
 ```
