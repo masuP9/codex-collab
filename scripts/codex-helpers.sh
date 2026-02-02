@@ -2039,9 +2039,8 @@ codex_launch_interactive_pane() {
 # Get or create a Codex pane (unified entry point)
 # Usage: pane_id=$(codex_get_or_create_pane [sandbox_mode])
 # This function:
-# 1. First tries to find an existing Codex pane (codex_find_pane)
-# 2. Verifies the pane is still valid (codex_verify_pane)
-# 3. If not found or invalid, launches a new interactive pane (codex_launch_interactive_pane)
+# 1. First tries to find an existing Codex pane (codex_find_pane, which internally verifies)
+# 2. If not found or invalid, launches a new interactive pane (codex_launch_interactive_pane)
 # Returns: Pane ID on success, empty on failure
 codex_get_or_create_pane() {
   local sandbox_mode="${1:-read-only}"
@@ -2050,23 +2049,16 @@ codex_get_or_create_pane() {
   codex_debug "get_or_create: checking for existing pane"
 
   # Try to find existing pane
+  # Note: codex_find_pane already calls codex_verify_pane internally,
+  # so we trust its result to avoid race conditions from double verification
   local existing_pane
   existing_pane=$(codex_find_pane "$pane_id_file" 2>/dev/null)
 
   if [ -n "$existing_pane" ]; then
-    # Verify the pane is still valid (running Codex)
-    local verify_result
-    verify_result=$(codex_verify_pane "$existing_pane")
-    if [ "$verify_result" = "valid" ]; then
-      codex_debug "get_or_create: found and verified existing pane $existing_pane"
-      echo "$existing_pane"
-      return 0
-    else
-      codex_debug "get_or_create: pane $existing_pane verification failed: $verify_result"
-      echo "Existing pane $existing_pane is no longer valid ($verify_result), creating new one..." >&2
-      # Remove stale pane ID file
-      rm -f "$pane_id_file"
-    fi
+    # codex_find_pane already verified the pane, trust the result
+    codex_debug "get_or_create: found verified existing pane $existing_pane"
+    echo "$existing_pane"
+    return 0
   fi
 
   codex_debug "get_or_create: no existing pane, launching new one"
