@@ -774,11 +774,16 @@ codex_setup_evented_wait() {
 
   # Write detector script (POSIX-compatible /bin/sh)
   # Script reads arguments from files, avoiding all quoting issues
+  # NOTE: This script must handle TUI output without newlines (Codex uses cursor control)
   local detector_script="$session_dir/detector.sh"
   cat > "$detector_script" << 'DETECTOR_SCRIPT'
 #!/bin/sh
 # Marker detector for codex_setup_evented_wait
 # Arguments: SESSION_DIR (contains marker, signal, socket files)
+#
+# IMPORTANT: Codex CLI output uses ANSI cursor control sequences instead of newlines.
+# Traditional line-based reading (read -r) would wait forever.
+# This script uses chunk-based reading with grep to detect markers in streams.
 SESSION_DIR="$1"
 
 # Read arguments from files (avoids quoting issues)
@@ -786,25 +791,21 @@ MARKER=$(cat "$SESSION_DIR/marker")
 SIGNAL=$(cat "$SESSION_DIR/signal")
 SOCKET=$(cat "$SESSION_DIR/socket")
 
-# ESC character for stripping ANSI sequences
-ESC=$(printf '\033')
+# Use grep to search for marker in the entire stream
+# -q: quiet mode, exit 0 on first match
+# -F: fixed string (not regex)
+# This handles streams without newlines because grep reads until EOF or match
+if grep -qF "$MARKER"; then
+  if [ -n "$SOCKET" ]; then
+    tmux -S "$SOCKET" wait-for -S "$SIGNAL"
+  else
+    tmux wait-for -S "$SIGNAL"
+  fi
+  exit 0
+fi
 
-while IFS= read -r line; do
-  # Strip ANSI escape sequences (CSI sequences: ESC [ ... letter)
-  clean=$(printf '%s' "$line" | sed "s/${ESC}\\[[^a-zA-Z]*[a-zA-Z]//g")
-
-  # Check for marker using case pattern matching
-  case "$clean" in
-    *"$MARKER"*)
-      if [ -n "$SOCKET" ]; then
-        tmux -S "$SOCKET" wait-for -S "$SIGNAL"
-      else
-        tmux wait-for -S "$SIGNAL"
-      fi
-      exit 0
-      ;;
-  esac
-done
+# If grep exits without finding marker (EOF reached), exit silently
+exit 1
 DETECTOR_SCRIPT
   chmod +x "$detector_script"
 
