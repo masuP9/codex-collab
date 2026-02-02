@@ -220,10 +220,42 @@ Generate a unique marker and send the prompt using file-based method. Use differ
 PROMPT_FILE="$TMP_DIR/codex-attach-prompt.txt"
 USER_PROMPT="$ARGUMENTS"
 
+# Source helpers for language directive
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+# Get language setting from config (default: en)
+# Read from settings file if available
+SETTINGS_FILE=".claude/codex-collab.local.md"
+if [ -f "$SETTINGS_FILE" ]; then
+  LANGUAGE=$(awk '/^language:/ {print $2}' "$SETTINGS_FILE" 2>/dev/null || echo "en")
+else
+  LANGUAGE="en"
+fi
+
+# Get language directive (empty for English)
+LANG_DIRECTIVE=""
+if type codex_get_language_directive &>/dev/null; then
+  LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
+else
+  # Inline fallback
+  if [ "$LANGUAGE" != "en" ] && [ -n "$LANGUAGE" ]; then
+    if [ "$LANGUAGE" = "ja" ]; then
+      LANG_DIRECTIVE="**日本語で回答してください。途中の説明や思考プロセスも日本語で記述してください。**
+
+"
+    else
+      LANG_DIRECTIVE="**${LANGUAGE}で回答してください。途中の説明や思考プロセスも${LANGUAGE}で記述してください。**
+
+"
+    fi
+  fi
+fi
+
 # Build prompt based on session state
 if [ "$IS_NEW_SESSION" = true ]; then
   cat > "$PROMPT_FILE" << PROMPT_EOF
-## Context (New Session)
+${LANG_DIRECTIVE}## Context (New Session)
 
 You are collaborating with Claude Code. This is the start of a new collaboration session.
 
@@ -239,7 +271,7 @@ PROMPT_EOF
   echo "Using full context template (new session)"
 else
   cat > "$PROMPT_FILE" << PROMPT_EOF
-## Update (Turn $TURN_COUNT)
+${LANG_DIRECTIVE}## Update (Turn $TURN_COUNT)
 
 **IMPORTANT**: If you reference any files, always re-read them from disk. Ignore any cached content from earlier in this conversation.
 

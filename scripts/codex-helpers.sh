@@ -41,6 +41,41 @@ _CODEX_HELPERS_LOADED=1
 : "${CODEX_SIGNAL_CHANNEL:=codex-done}"
 
 # ==============================================================================
+# Language Directive
+# ==============================================================================
+
+# Get language directive prefix for Codex prompts
+# Usage: directive=$(codex_get_language_directive "ja")
+# Returns: Language instruction string (empty if lang is "en" or not set)
+#
+# When language is set to a non-English value (e.g., "ja"), this function
+# returns a directive to be prepended to Codex prompts. The directive includes:
+# - Main response language instruction
+# - Thinking/reasoning process language instruction
+#
+# Examples:
+#   "ja" -> "**jaで回答してください。途中の説明や思考プロセスも日本語で記述してください。**"
+#   "zh" -> "**zhで回答してください。途中の説明や思考プロセスもzhで記述してください。**"
+#   "en" -> (empty, no directive needed)
+codex_get_language_directive() {
+  local lang="${1:-en}"
+
+  # No directive needed for English (default)
+  if [ "$lang" = "en" ] || [ -z "$lang" ]; then
+    return 0
+  fi
+
+  # Return language-specific directive with thinking process instruction
+  # For Japanese, use natural phrasing
+  if [ "$lang" = "ja" ]; then
+    echo "**日本語で回答してください。途中の説明や思考プロセスも日本語で記述してください。**"
+  else
+    echo "**${lang}で回答してください。途中の説明や思考プロセスも${lang}で記述してください。**"
+  fi
+  echo ""
+}
+
+# ==============================================================================
 # Debug Logging
 # ==============================================================================
 

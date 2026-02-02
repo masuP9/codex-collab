@@ -49,6 +49,7 @@ Check for project-specific settings:
 **Default settings:**
 - model: (Codex default)
 - sandbox: read-only
+- language: en (Codex response language)
 - **Timeout** (codex.*):
   - codex.wait_timeout: 180 (seconds, max 600)
 - **Launch mode** (launch.*):
@@ -63,6 +64,16 @@ Check for project-specific settings:
   - review.enabled: true
   - review.max_iterations: 5
   - review.user_confirm: never
+
+**Language setting:**
+When `language` is set to a non-English value (e.g., `ja`), all Codex prompts will be prefixed with a language directive:
+```
+**{language}で回答してください。**
+
+[Original prompt content]
+```
+
+This ensures Codex responds in the specified language regardless of the prompt template language.
 
 ### Step 2: Analyze Task
 
@@ -102,9 +113,36 @@ CODEX_OUTPUT="$TMP_DIR/codex-plan-output.md"
 CODEX_PROMPT="$TMP_DIR/codex-plan-prompt.txt"
 rm -f "$CODEX_OUTPUT"
 
-# Write prompt to file
-cat > "$CODEX_PROMPT" << 'EOF'
-You are collaborating with Claude Code. Your role is to create a detailed implementation plan.
+# Source helpers for language directive
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+# Get language setting from config (default: en)
+# LANGUAGE variable should be read from settings file in Step 1
+LANGUAGE="${LANGUAGE:-en}"
+
+# Get language directive (empty for English)
+LANG_DIRECTIVE=""
+if type codex_get_language_directive &>/dev/null; then
+  LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
+else
+  # Inline fallback
+  if [ "$LANGUAGE" != "en" ] && [ -n "$LANGUAGE" ]; then
+    if [ "$LANGUAGE" = "ja" ]; then
+      LANG_DIRECTIVE="**日本語で回答してください。途中の説明や思考プロセスも日本語で記述してください。**
+
+"
+    else
+      LANG_DIRECTIVE="**${LANGUAGE}で回答してください。途中の説明や思考プロセスも${LANGUAGE}で記述してください。**
+
+"
+    fi
+  fi
+fi
+
+# Write prompt to file (with optional language directive prefix)
+cat > "$CODEX_PROMPT" << EOF
+${LANG_DIRECTIVE}You are collaborating with Claude Code. Your role is to create a detailed implementation plan.
 
 **IMPORTANT**: If you reference any files, always re-read them from disk even if you have read them before in this session. Ignore any cached content from earlier in this conversation.
 
@@ -142,7 +180,7 @@ decisions:  # key decisions made
 ---
 ```
 
-Use `status: continue` if you have questions, `status: stop` if the plan is complete.
+Use \`status: continue\` if you have questions, \`status: stop\` if the plan is complete.
 
 Provide your plan now.
 EOF
@@ -647,8 +685,34 @@ CODEX_REVIEW="$TMP_DIR/codex-review-output.md"
 REVIEW_PROMPT="$TMP_DIR/codex-review-prompt.txt"
 rm -f "$CODEX_REVIEW"
 
-cat > "$REVIEW_PROMPT" << 'EOF'
-Review the implementation described below.
+# Source helpers for language directive
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+# Get language setting from config (default: en)
+LANGUAGE="${LANGUAGE:-en}"
+
+# Get language directive (empty for English)
+LANG_DIRECTIVE=""
+if type codex_get_language_directive &>/dev/null; then
+  LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
+else
+  # Inline fallback
+  if [ "$LANGUAGE" != "en" ] && [ -n "$LANGUAGE" ]; then
+    if [ "$LANGUAGE" = "ja" ]; then
+      LANG_DIRECTIVE="**日本語で回答してください。途中の説明や思考プロセスも日本語で記述してください。**
+
+"
+    else
+      LANG_DIRECTIVE="**${LANGUAGE}で回答してください。途中の説明や思考プロセスも${LANGUAGE}で記述してください。**
+
+"
+    fi
+  fi
+fi
+
+cat > "$REVIEW_PROMPT" << EOF
+${LANG_DIRECTIVE}Review the implementation described below.
 
 **IMPORTANT**: If you reference any files, always re-read them from disk even if you have read them before in this session. Ignore any cached content from earlier in this conversation.
 
@@ -694,6 +758,8 @@ findings:  # if any issues found
 Provide your review now.
 EOF
 ```
+
+> **Note:** The language directive (if configured) is automatically prepended to ensure Codex responds in the specified language.
 
 **2. Launch Codex for review:**
 

@@ -5,6 +5,10 @@ Copy this file to `.claude/codex-collab.local.md` and customize for your project
 ---
 model: o4-mini
 sandbox: read-only
+language: en               # Response language for Codex: en | ja | etc.
+                           # When set to non-English, adds language directive to all prompts.
+                           # For ja: "日本語で回答してください。途中の説明や思考プロセスも日本語で..."
+                           # This ensures both final output and thinking process are in the target language.
 
 # Timeout settings
 codex:
