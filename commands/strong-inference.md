@@ -321,19 +321,25 @@ if [ -n "$TMUX" ]; then
     # Inline fallback: check for existing pane
     if [ -f "$PANE_ID_FILE" ]; then
       STORED_PANE=$(cat "$PANE_ID_FILE")
+      # Verify pane exists, belongs to current session, and is running Codex
+      CURRENT_SESSION=$(tmux display-message -p '#{session_id}' 2>/dev/null)
+      PANE_SESSION=$(tmux display-message -t "$STORED_PANE" -p '#{session_id}' 2>/dev/null)
       PANE_CMD=$(tmux display-message -t "$STORED_PANE" -p '#{pane_current_command}' 2>/dev/null)
-      if [ "$PANE_CMD" = "codex" ] || [ "$PANE_CMD" = "node" ]; then
+      if [ "$PANE_SESSION" = "$CURRENT_SESSION" ] && { [ "$PANE_CMD" = "codex" ] || [ "$PANE_CMD" = "node" ]; }; then
         CODEX_PANE="$STORED_PANE"
       fi
     fi
     # Launch new if not found
     if [ -z "$CODEX_PANE" ]; then
       ORIGINAL_PANE=$(tmux display-message -p '#{pane_id}')
-      tmux split-window -h -d -c "$(pwd)" "codex -s $SANDBOX"
+      # Use -P -F to directly capture the new pane ID (more reliable than list-panes filtering)
+      CODEX_PANE=$(tmux split-window -h -d -c "$(pwd)" -P -F '#{pane_id}' "codex -s $SANDBOX")
       sleep 3
-      CODEX_PANE=$(tmux list-panes -F '#{pane_id}' | grep -v "^${ORIGINAL_PANE}$" | tail -1)
-      echo "$CODEX_PANE" > "$PANE_ID_FILE"
-      tmux select-pane -t "$ORIGINAL_PANE"
+      # Only save pane ID if split succeeded (non-empty)
+      if [ -n "$CODEX_PANE" ]; then
+        echo "$CODEX_PANE" > "$PANE_ID_FILE"
+        tmux select-pane -t "$ORIGINAL_PANE"
+      fi
     fi
   fi
 fi
