@@ -33,6 +33,44 @@ PRを作成する前に、変更内容に応じて以下の **両方のファイ
 }
 ```
 
+## Codex CLI の仕様
+
+OpenAI Codex CLI と連携する際に知っておくべき仕様:
+
+### TUI 出力形式
+
+Codex CLI は **改行文字（`\n`）を含まない TUI 形式**で出力する。
+
+- 画面更新は ANSI カーソル制御シーケンス（例: `\033[32;3H`）を使用
+- `while read -r line` のような行単位読み取りは永遠にブロックされる
+- ストリーム処理には `grep -qF` など、改行に依存しない方法を使用すること
+
+```sh
+# NG: 改行がないため永遠に待機
+while IFS= read -r line; do
+  echo "$line" | grep -qF "$MARKER" && break
+done
+
+# OK: ストリーム全体を検索
+if grep -qF "$MARKER"; then
+  # マーカー検出
+fi
+```
+
+### マーカー形式
+
+完了検出には `<<RESPONSE_END_xxx>>` 形式のユニークマーカーを使用:
+
+```
+<<RESPONSE_END_1770044801-429>>
+```
+
+### ファイルベース応答
+
+長い応答はファイルに書き込まれる:
+- 応答ファイル: `tmp/codex-response-*.md`
+- プロンプト内でファイルパスを指定し、Codex に書き込ませる
+
 ## プロジェクト構造
 
 - `commands/` - `/collab` などのスラッシュコマンド
