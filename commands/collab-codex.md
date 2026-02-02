@@ -257,9 +257,10 @@ fi
 
 > **Key Change**: Instead of launching `codex exec` (which exits after completion), we now launch `codex` in interactive mode. The pane persists and can be reused for subsequent prompts.
 
-**3. Send prompt to Codex pane (tmux mode):**
+**3. Send prompt and receive response (tmux mode - file-based, recommended):**
 
-For tmux mode, send the prompt to the persistent pane:
+For tmux mode, use the file-based response protocol which writes responses to a file instead of capturing from the pane. This avoids truncation issues with long responses.
+
 ```bash
 # Source helpers
 HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
@@ -267,41 +268,80 @@ HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 
 # CODEX_PANE is set from step 2
 # CODEX_PROMPT file was prepared in Step 3.1
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+WAIT_TIMEOUT="${CODEX_WAIT_TIMEOUT:-180}"
 
-# Capture state before sending
-BEFORE_CONTENT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
-if type codex_hash_content &>/dev/null; then
-  BEFORE_HASH=$(echo "$BEFORE_CONTENT" | codex_hash_content)
+# Use file-based response workflow if available (recommended)
+PROMPT_SENT=false
+
+if type codex_file_response_workflow &>/dev/null; then
+  echo "Using file-based response protocol..."
+
+  # This function handles:
+  # 1. Generate unique output file
+  # 2. Add file output instructions to prompt
+  # 3. Send prompt to Codex
+  # 4. Wait for completion marker
+  # 5. Read response from file
+  RESPONSE=$(codex_file_response_workflow "$CODEX_PANE" "$CODEX_PROMPT" "$WAIT_TIMEOUT")
+  WORKFLOW_RESULT=$?
+  PROMPT_SENT=true  # Prompt was sent regardless of success/failure
+
+  if [ $WORKFLOW_RESULT -eq 0 ]; then
+    # Save response to output file for Step 5
+    echo "$RESPONSE" > "$TMP_DIR/codex-plan-output.md"
+    echo "Codex response received and saved"
+  else
+    echo "Warning: File-based workflow returned code $WORKFLOW_RESULT"
+    echo "Prompt was already sent. Falling back to capture-pane for response retrieval."
+    # Fall through to legacy capture (but NOT re-send prompt)
+    USE_LEGACY_CAPTURE=true
+  fi
 else
-  BEFORE_HASH=$(echo "$BEFORE_CONTENT" | md5sum 2>/dev/null | awk '{print $1}')
+  echo "File-based workflow not available, using legacy method"
+  USE_LEGACY=true
 fi
 
-# Send prompt using chunked method (handles long prompts)
-if type codex_send_prompt_chunked &>/dev/null; then
-  END_MARKER=$(codex_send_prompt_chunked "$CODEX_PANE" "$(cat "$CODEX_PROMPT")")
-else
-  # Inline fallback
-  MARKER_ID="$(date +%s)-$RANDOM"
-  END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
-  PROMPT_CONTENT=$(cat "$CODEX_PROMPT")
-  FULL_PROMPT="${PROMPT_CONTENT}
+# Legacy fallback: only used when file-based workflow is NOT available
+if [ "${USE_LEGACY:-}" = "true" ]; then
+  # Capture state before sending
+  BEFORE_CONTENT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
+  if type codex_hash_content &>/dev/null; then
+    BEFORE_HASH=$(echo "$BEFORE_CONTENT" | codex_hash_content)
+  else
+    BEFORE_HASH=$(echo "$BEFORE_CONTENT" | md5sum 2>/dev/null | awk '{print $1}')
+  fi
+
+  # Send prompt using chunked method (handles long prompts)
+  if type codex_send_prompt_chunked &>/dev/null; then
+    END_MARKER=$(codex_send_prompt_chunked "$CODEX_PANE" "$(cat "$CODEX_PROMPT")")
+  else
+    # Inline fallback
+    MARKER_ID="$(date +%s)-$RANDOM"
+    END_MARKER="<<RESPONSE_END_${MARKER_ID}>>"
+    PROMPT_CONTENT=$(cat "$CODEX_PROMPT")
+    FULL_PROMPT="${PROMPT_CONTENT}
 
 When finished, output exactly: ${END_MARKER}"
 
-  tmux send-keys -t "$CODEX_PANE" C-u
-  sleep 0.1
-  TEMP_FILE="$TMP_DIR/codex-prompt-$$"
-  echo "$FULL_PROMPT" > "$TEMP_FILE"
-  tmux load-buffer "$TEMP_FILE"
-  tmux paste-buffer -t "$CODEX_PANE"
-  sleep 0.5
-  tmux send-keys -t "$CODEX_PANE" Enter
-  rm -f "$TEMP_FILE"
-fi
+    tmux send-keys -t "$CODEX_PANE" C-u
+    sleep 0.1
+    TEMP_FILE="$TMP_DIR/codex-prompt-$$"
+    echo "$FULL_PROMPT" > "$TEMP_FILE"
+    tmux load-buffer "$TEMP_FILE"
+    tmux paste-buffer -t "$CODEX_PANE"
+    sleep 0.5
+    tmux send-keys -t "$CODEX_PANE" Enter
+    rm -f "$TEMP_FILE"
+  fi
 
-echo "Prompt sent to Codex pane: $CODEX_PANE"
-echo "Completion marker: $END_MARKER"
+  echo "Prompt sent to Codex pane: $CODEX_PANE"
+  echo "Completion marker: $END_MARKER"
+  # Note: Wait for completion in Step 4
+fi
 ```
+
+> **Note:** The file-based protocol instructs Codex to write its response to a unique file (e.g., `tmp/codex-response-20260202-153045-8f3c2a.md`) and output only a completion marker to stdout. This avoids capture-pane truncation issues for long responses.
 
 **4. Launch Codex (wt/inline mode fallback):**
 
@@ -502,39 +542,78 @@ cp "$CAPTURE_FILE" "$CODEX_OUTPUT"
 
 Wait for Codex to complete. Method depends on launch mode:
 
+> **Note:** If you used the **file-based response protocol** in Step 3 (i.e., `codex_file_response_workflow`) and it succeeded, the response is already received and saved. **Skip this step** and proceed to Step 5.
+>
+> If the file-based workflow **failed after sending** (USE_LEGACY_CAPTURE=true), this step will wait for completion and capture via pane (no re-send).
+
 > **Important:** Set the Bash tool's `timeout` parameter to `min(wait_timeout + 60, 600) * 1000` milliseconds. Example: for 180s wait, use `timeout: 240000`. Max: 600000ms (10 minutes).
 
-**tmux mode with persistent pane** (marker + idle detection):
+**tmux mode with persistent pane** (capture-pane based):
+
+Use this if the file-based workflow was not available (USE_LEGACY) or failed after sending (USE_LEGACY_CAPTURE):
+
 ```bash
 # Source helpers
 HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
 [ -f "$HELPERS" ] && source "$HELPERS"
 
-# CODEX_PANE and END_MARKER from Step 3
-# BEFORE_HASH from Step 3
-WAIT_TIMEOUT="${WAIT_TIMEOUT:-180}"
-
-if type codex_wait_completion &>/dev/null; then
-  CODEX_WAIT_TIMEOUT="$WAIT_TIMEOUT"
-  codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
-else
-  # Inline fallback: poll for marker
-  COMPLETED=false
-  for i in $(seq 1 $WAIT_TIMEOUT); do
-    CURRENT_OUTPUT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
-    if echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
-      echo "Codex response completed (marker found)"
-      COMPLETED=true
-      break
-    fi
-    sleep 1
-  done
-  [ "$COMPLETED" = false ] && echo "Warning: Timeout after ${WAIT_TIMEOUT}s"
-fi
-
-# Capture output to file for Step 5
 TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
-tmux capture-pane -t "$CODEX_PANE" -p -S -5000 > "$TMP_DIR/codex-plan-output.md"
+
+# Skip if file-based workflow already completed successfully
+if [ -f "$TMP_DIR/codex-plan-output.md" ] && [ -s "$TMP_DIR/codex-plan-output.md" ]; then
+  echo "Response already received via file-based workflow, skipping wait"
+else
+  # Need to wait and capture via pane
+  # This handles both USE_LEGACY (prompt sent via chunked) and USE_LEGACY_CAPTURE (prompt sent via file-based but failed to get response)
+
+  # CODEX_PANE from Step 3
+  # END_MARKER and BEFORE_HASH from Step 3 (only set if USE_LEGACY)
+  WAIT_TIMEOUT="${WAIT_TIMEOUT:-180}"
+
+  # Wait for idle or marker (works for both cases)
+  if type codex_wait_completion &>/dev/null; then
+    CODEX_WAIT_TIMEOUT="$WAIT_TIMEOUT"
+    # If END_MARKER is not set (USE_LEGACY_CAPTURE case), use empty marker - will rely on idle detection
+    codex_wait_completion "$CODEX_PANE" "${END_MARKER:-}" "${BEFORE_HASH:-}"
+  else
+    # Inline fallback: poll for idle
+    echo "Waiting for Codex to complete..."
+    COMPLETED=false
+    IDLE_COUNT=0
+    LAST_HASH=""
+    for i in $(seq 1 $WAIT_TIMEOUT); do
+      CURRENT_OUTPUT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
+      CURRENT_HASH=$(echo "$CURRENT_OUTPUT" | md5sum 2>/dev/null | awk '{print $1}')
+
+      # Check for marker if set
+      if [ -n "${END_MARKER:-}" ] && echo "$CURRENT_OUTPUT" | grep -qF "$END_MARKER"; then
+        echo "Codex response completed (marker found)"
+        COMPLETED=true
+        break
+      fi
+
+      # Idle detection
+      if [ "$CURRENT_HASH" = "$LAST_HASH" ]; then
+        IDLE_COUNT=$((IDLE_COUNT + 1))
+        if [ "$IDLE_COUNT" -ge 5 ]; then
+          if echo "$CURRENT_OUTPUT" | tail -5 | grep -qE '^\s*›|^>'; then
+            echo "Codex appears idle"
+            COMPLETED=true
+            break
+          fi
+        fi
+      else
+        IDLE_COUNT=0
+        LAST_HASH="$CURRENT_HASH"
+      fi
+      sleep 1
+    done
+    [ "$COMPLETED" = false ] && echo "Warning: Timeout after ${WAIT_TIMEOUT}s"
+  fi
+
+  # Capture output to file for Step 5
+  tmux capture-pane -t "$CODEX_PANE" -p -S -5000 > "$TMP_DIR/codex-plan-output.md"
+fi
 ```
 
 **Legacy tmux mode with codex exec** (signal-based, instant detection):
@@ -767,32 +846,80 @@ EOF
 
 > **Note:** The language directive (if configured) is automatically prepended to ensure Codex responds in the specified language.
 
-**2. Launch Codex for review:**
+**2. Send review request and receive response (tmux mode - file-based, recommended):**
 
-Use the same launch mode as Step 3. For tmux mode:
+Reuse the existing Codex pane from Step 3 and use file-based response protocol:
+
 ```bash
-# Run Codex review in a new pane with signal-based completion
-PROMPT="$REVIEW_PROMPT"
-OUTPUT="$CODEX_REVIEW"
-SANDBOX="${SANDBOX_SETTING:-read-only}"
-# Unique signal: PID + timestamp + random suffix to avoid collisions
-SIGNAL="codex-review-$$-$(date +%s)-$RANDOM"
+# Source helpers
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
 
-# Capture original pane ID to ensure focus returns after split
-ORIGINAL_PANE=$(tmux display-message -p '#{pane_id}')
+# Get existing Codex pane (should exist from Step 3)
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+PANE_ID_FILE="$TMP_DIR/codex-pane-id"
+WAIT_TIMEOUT="${CODEX_WAIT_TIMEOUT:-180}"
 
-tmux split-window -h -d \
-  "cd \"$(pwd)\"; \
-   cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\"; \
-   echo '=== CODEX_DONE ===' >> \"$OUTPUT\"; \
-   tmux wait-for -S \"$SIGNAL\""
+CODEX_PANE=""
+if type codex_find_pane &>/dev/null; then
+  CODEX_PANE=$(codex_find_pane "$PANE_ID_FILE")
+elif [ -f "$PANE_ID_FILE" ]; then
+  CODEX_PANE=$(cat "$PANE_ID_FILE")
+fi
 
-# Ensure focus returns to original pane (safety net for -d flag inconsistencies)
-tmux select-pane -t "$ORIGINAL_PANE"
+if [ -z "$CODEX_PANE" ]; then
+  echo "Error: Codex pane not found. Run Step 3 first."
+  exit 1
+fi
 
-echo "Codex review running in a new pane (right side)"
-echo "Signal: $SIGNAL"
+# Use file-based response workflow if available (recommended)
+if type codex_file_response_workflow &>/dev/null; then
+  echo "Sending review request using file-based protocol..."
+
+  RESPONSE=$(codex_file_response_workflow "$CODEX_PANE" "$REVIEW_PROMPT" "$WAIT_TIMEOUT")
+  WORKFLOW_RESULT=$?
+
+  if [ $WORKFLOW_RESULT -eq 0 ]; then
+    echo "$RESPONSE" > "$CODEX_REVIEW"
+    echo "Review response received and saved"
+  else
+    echo "Warning: File-based workflow returned code $WORKFLOW_RESULT, falling back to legacy"
+    USE_LEGACY=true
+  fi
+else
+  USE_LEGACY=true
+fi
+
+# Legacy fallback: codex exec in new pane
+if [ "${USE_LEGACY:-}" = "true" ]; then
+  PROMPT="$REVIEW_PROMPT"
+  OUTPUT="$CODEX_REVIEW"
+  SANDBOX="${SANDBOX_SETTING:-read-only}"
+  SIGNAL="codex-review-$$-$(date +%s)-$RANDOM"
+
+  ORIGINAL_PANE=$(tmux display-message -p '#{pane_id}')
+
+  tmux split-window -h -d \
+    "cd \"$(pwd)\"; \
+     cat \"$PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$OUTPUT\"; \
+     echo '=== CODEX_DONE ===' >> \"$OUTPUT\"; \
+     tmux wait-for -S \"$SIGNAL\""
+
+  tmux select-pane -t "$ORIGINAL_PANE"
+
+  echo "Codex review running in a new pane (right side)"
+  echo "Signal: $SIGNAL"
+
+  # Wait for completion
+  if timeout "${WAIT_TIMEOUT}s" tmux wait-for "$SIGNAL"; then
+    echo "Codex review completed"
+  else
+    echo "Timeout - check tmux pane or output file"
+  fi
+fi
 ```
+
+**2a. Launch Codex for review (wt/inline mode fallback):**
 
 For wt mode:
 ```bash
@@ -803,17 +930,9 @@ wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat \"$REVIEW_PROMPT\" 
 
 > **Important:** Set Bash tool's `timeout` parameter to match or exceed `codex.wait_timeout` (in milliseconds).
 
-**3. Wait for completion:**
+**3. Wait for completion (wt/inline mode only):**
 
-For tmux mode (signal-based):
-```bash
-# SIGNAL from step 2
-if timeout "${WAIT_TIMEOUT}s" tmux wait-for "$SIGNAL"; then
-  echo "Codex review completed"
-else
-  echo "Timeout - check tmux pane or output file"
-fi
-```
+> **Note:** If you used the file-based response protocol in Step 2, skip this step.
 
 For wt/inline mode (file polling):
 ```bash

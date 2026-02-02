@@ -355,8 +355,9 @@ test_tmp_directory() {
   # Save original value
   local orig_tmp_dir="${CODEX_TMP_DIR:-}"
 
-  # Use relative path for test (matching spec: relative paths only)
+  # Use relative path for test - function should return absolute path
   local test_tmp=".test-tmp-$$"
+  local expected_abs_path="$(pwd)/$test_tmp"
   CODEX_TMP_DIR="$test_tmp"
 
   # Clean up any existing test directory
@@ -371,20 +372,21 @@ test_tmp_directory() {
     fail "ensure_tmp_dir" "Directory not created: $test_tmp"
   fi
 
-  # Test codex_ensure_tmp_dir returns path
-  if [ "$result" = "$test_tmp" ]; then
-    pass "ensure_tmp_dir returns correct path"
+  # Test codex_ensure_tmp_dir returns absolute path
+  # Note: codex_ensure_tmp_dir was updated to return absolute paths for consistency
+  if [ "$result" = "$expected_abs_path" ]; then
+    pass "ensure_tmp_dir returns absolute path"
   else
-    fail "ensure_tmp_dir return" "Expected '$test_tmp', got '$result'"
+    fail "ensure_tmp_dir return" "Expected '$expected_abs_path', got '$result'"
   fi
 
-  # Test codex_tmp_path returns correct path
+  # Test codex_tmp_path returns correct absolute path
   local path_result
   path_result=$(codex_tmp_path "test-file.txt")
-  if [ "$path_result" = "$test_tmp/test-file.txt" ]; then
-    pass "tmp_path returns correct path"
+  if [ "$path_result" = "$expected_abs_path/test-file.txt" ]; then
+    pass "tmp_path returns absolute path"
   else
-    fail "tmp_path" "Expected '$test_tmp/test-file.txt', got '$path_result'"
+    fail "tmp_path" "Expected '$expected_abs_path/test-file.txt', got '$path_result'"
   fi
 
   # Cleanup
