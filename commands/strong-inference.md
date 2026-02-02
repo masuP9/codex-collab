@@ -221,8 +221,39 @@ CONTEXT_SECTION=$(awk '/^## Context$/,/^## [^C]/' "$STATE_FILE" | grep -v '^## '
 
 HYPOTHESIS_PROMPT="$TMP_DIR/strong-inference-hypothesis-prompt.txt"
 
+# Source helpers for language directive
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+# Get language setting from config (default: en)
+SETTINGS_FILE=".claude/codex-collab.local.md"
+if [ -f "$SETTINGS_FILE" ]; then
+  LANGUAGE=$(awk '/^language:/ {print $2}' "$SETTINGS_FILE" 2>/dev/null || echo "en")
+else
+  LANGUAGE="en"
+fi
+
+# Get language directive (empty for English)
+LANG_DIRECTIVE=""
+if type codex_get_language_directive &>/dev/null; then
+  LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
+else
+  # Inline fallback
+  if [ "$LANGUAGE" != "en" ] && [ -n "$LANGUAGE" ]; then
+    if [ "$LANGUAGE" = "ja" ]; then
+      LANG_DIRECTIVE="**日本語で回答してください。途中の説明や思考プロセスも日本語で記述してください。**
+
+"
+    else
+      LANG_DIRECTIVE="**${LANGUAGE}で回答してください。途中の説明や思考プロセスも${LANGUAGE}で記述してください。**
+
+"
+    fi
+  fi
+fi
+
 cat > "$HYPOTHESIS_PROMPT" << EOF
-You are helping investigate a problem using Strong Inference methodology.
+${LANG_DIRECTIVE}You are helping investigate a problem using Strong Inference methodology.
 
 ## Problem
 $PROBLEM_DESC
@@ -633,8 +664,39 @@ fi
 # Read state file content
 STATE_CONTENT=$(cat "$STATE_FILE")
 
+# Source helpers for language directive
+HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+# Get language setting from config (default: en)
+SETTINGS_FILE=".claude/codex-collab.local.md"
+if [ -f "$SETTINGS_FILE" ]; then
+  LANGUAGE=$(awk '/^language:/ {print $2}' "$SETTINGS_FILE" 2>/dev/null || echo "en")
+else
+  LANGUAGE="en"
+fi
+
+# Get language directive (empty for English)
+LANG_DIRECTIVE=""
+if type codex_get_language_directive &>/dev/null; then
+  LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
+else
+  # Inline fallback
+  if [ "$LANGUAGE" != "en" ] && [ -n "$LANGUAGE" ]; then
+    if [ "$LANGUAGE" = "ja" ]; then
+      LANG_DIRECTIVE="**日本語で回答してください。途中の説明や思考プロセスも日本語で記述してください。**
+
+"
+    else
+      LANG_DIRECTIVE="**${LANGUAGE}で回答してください。途中の説明や思考プロセスも${LANGUAGE}で記述してください。**
+
+"
+    fi
+  fi
+fi
+
 cat > "$REVIEW_PROMPT" << EOF
-Review the Strong Inference investigation results.
+${LANG_DIRECTIVE}Review the Strong Inference investigation results.
 
 ## Investigation Summary
 $STATE_CONTENT
