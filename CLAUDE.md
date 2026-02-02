@@ -113,11 +113,18 @@ Bash 使用ルールの詳細（スキルコンテキスト検出の仕組み、
 各コマンドのbashブロックで以下のようにsourceします:
 
 ```bash
-HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+# Robust helper loading with fallback chain
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+[ -z "$HELPERS" ] || [ ! -f "$HELPERS" ] && HELPERS="$(pwd)/scripts/codex-helpers.sh"
 [ -f "$HELPERS" ] && source "$HELPERS"
 ```
 
-> **注意:** `${CLAUDE_PLUGIN_ROOT}` はClaude Codeのコマンドmarkdown内では動作しない既知のバグがあります（[#9354](https://github.com/anthropics/claude-code/issues/9354)）。そのため `$(pwd)` へのフォールバックを使用しています。
+> **注意:** `${CLAUDE_PLUGIN_ROOT}` はClaude Codeのコマンドmarkdown内では動作しない既知のバグがあります（[#9354](https://github.com/anthropics/claude-code/issues/9354)）。上記のフォールバックチェーンで `~/.claude/plugins/cache` を探索するようにしています。
 
 ### 関数の追加・変更
 
