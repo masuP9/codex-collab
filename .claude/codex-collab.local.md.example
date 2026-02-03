@@ -20,6 +20,10 @@ launch:
                            # auto: tmuxセッション内→tmux, それ以外→wt→inline
                            # tmux: 現在のペインを水平分割し右側で実行
                            # inline: 現在のターミナルで実行（ブロッキング）
+  # tmux_socket: /absolute/path/to/collab.sock
+                           # tmux ソケットの絶対パス（オプション）
+                           # 設定すると環境変数 CODEX_TMUX_SOCKET として使用される
+                           # 未設定の場合は $TMUX から自動検出
 
 # Planning exchange settings (Codex plans → Claude questions → Codex refines)
 exchange:
