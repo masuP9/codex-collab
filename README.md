@@ -33,15 +33,20 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 ```
 codex-collab/
 ├── .claude-plugin/
-│   └── plugin.json        # プラグインメタデータ
+│   └── plugin.json         # プラグインメタデータ
 ├── commands/
-│   ├── collab-codex.md    # /collab-codex コマンド
-│   └── strong-inference.md # /strong-inference コマンド
+│   ├── collab-codex.md     # /collab-codex コマンド
+│   ├── strong-inference.md # /strong-inference コマンド
+│   └── devils-advocate.md  # /devils-advocate コマンド
 ├── scripts/
-│   └── codex-helpers.sh   # 共通ヘルパー関数
+│   └── codex-helpers.sh    # 共通ヘルパー関数
 └── skills/
-    └── codex-collaboration/
-        └── references/     # プロトコル定義
+    ├── codex-collaboration/
+    │   └── references/     # プロトコル定義
+    ├── strong-inference/
+    │   └── references/     # 仮説テンプレート
+    └── devils-advocate/
+        └── references/     # 評価基準
 ```
 
 ### ヘルパースクリプト
@@ -107,6 +112,28 @@ Strong Inference（強い推論）メソッドを使って、仮説駆動でバ�
 - 仮説ツリーを `tmp/strong-inference/` に保存（調査状態を永続化）
 - tmuxモードではCodexが仮説生成、Claudeが検証実行
 
+### `/devils-advocate` コマンド
+
+Devil's Advocate（悪魔の代弁者）メソッドを使って、設計案や仮説をストレステストします。
+
+```
+# 基本的な使い方
+/devils-advocate このキャッシュ設計を検証して
+
+# モード指定
+/devils-advocate --mode claude-only マイクロサービス移行は妥当か
+
+# ラウンド数指定
+/devils-advocate --max-rounds 5 この認証設計
+```
+
+**特徴:**
+- Blue Team（提案側）vs Red Team（批判側）の構造化議論
+- 3ラウンド（デフォルト）の反論・再反論
+- 最終評価: APPROVE / CONDITIONAL / REJECT
+- tmuxモードではCodexがRed Team、ClaudeがBlue Team
+- 議論ログを `tmp/devils-advocate/` に保存
+
 ### スキルの自動起動
 
 以下のようなリクエストで自動的にスキルが有効になります:
@@ -115,6 +142,42 @@ Strong Inference（強い推論）メソッドを使って、仮説駆動でバ�
 - 「Codexに計画を作成させたい」
 - 「このバグの原因を調査して」（Strong Inferenceスキル）
 - 「仮説を立てて検証して」（Strong Inferenceスキル）
+- 「この設計を批判的にレビューして」（Devil's Advocateスキル）
+- 「反論をもらいたい」（Devil's Advocateスキル）
+
+### Strong Inference vs Devil's Advocate の使い分け
+
+両スキルは目的が異なります。以下のガイドを参考にしてください。
+
+#### ユースケース別の推奨スキル
+
+| ユースケース | 推奨スキル | 理由 |
+|-------------|-----------|------|
+| バグの原因調査 | `/strong-inference` | 競合仮説を立て、実験で排除 |
+| パフォーマンス問題の調査 | `/strong-inference` | 原因を絞り込む検証が必要 |
+| なぜ動かないか分からない | `/strong-inference` | 未知の原因を特定する |
+| 設計案のレビュー | `/devils-advocate` | 反論を通じて弱点を発見 |
+| アーキテクチャ決定の検証 | `/devils-advocate` | 議論で合意形成 |
+| リスク評価 | `/devils-advocate` | 批判的視点で穴を見つける |
+| PRのコードレビュー | `/collab-codex` | 実装済みコードの品質確認 |
+
+#### 判断が難しいケース
+
+**「仮説を検証したい」と言われたら？**
+- 原因不明の問題 → `/strong-inference`（実験で仮説を排除）
+- 設計案の妥当性 → `/devils-advocate`（議論で仮説を強化）
+
+**「レビューしてほしい」と言われたら？**
+- 実装済みコード → `/collab-codex`（品質チェック）
+- 設計案・提案 → `/devils-advocate`（批判的検証）
+
+#### 簡単な見分け方
+
+```
+「なぜ？」「原因は？」 → /strong-inference
+「これで良いか？」「弱点は？」 → /devils-advocate
+「実装をチェック」 → /collab-codex
+```
 
 ## 設定
 

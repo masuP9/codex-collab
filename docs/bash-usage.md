@@ -22,6 +22,9 @@ When you execute the same commands **outside** a skill context (directly in conv
 |-------|---------|---------|
 | `/collab-codex [task]` | Start a new collaboration workflow | `/collab-codex implement feature X` |
 | `/strong-inference [problem]` | Investigate a problem with competing hypotheses | `/strong-inference APIが時々500エラーを返す` |
+| `/devils-advocate [proposal]` | Stress-test a design or proposal | `/devils-advocate このキャッシュ設計を検証して` |
+
+> **Note:** `strong-inference` と `devils-advocate` の使い分けについては、[README.md の使い分けガイド](../README.md#strong-inference-vs-devils-advocate-の使い分け)を参照してください。
 
 ## How Skill Context Detection Works
 
