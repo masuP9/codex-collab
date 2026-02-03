@@ -1,6 +1,6 @@
 ---
 name: Strong Inference
-description: This skill should be used when the user wants to "investigate a bug", "debug an issue", "figure out why something is happening", "強い推論で調査", "仮説を立てて検証", "原因を特定", "バグの原因調査", "なぜ動かないか調べて", "問題を切り分け", or mentions systematic hypothesis-driven debugging.
+description: This skill should be used when the user wants to "investigate a bug", "debug an issue", "figure out why something is happening", "find the root cause", "troubleshoot", "強い推論で調査", "仮説を立てて検証", "原因を特定", "バグの原因調査", "なぜ動かないか調べて", "問題を切り分け", "原因不明", "デバッグ", or mentions systematic hypothesis-driven debugging. NOTE: Use this for investigating UNKNOWN causes, not for validating design proposals (use devils-advocate for that).
 ---
 
 # Strong Inference Skill
