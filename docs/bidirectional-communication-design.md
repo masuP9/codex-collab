@@ -221,6 +221,8 @@ CODEX_SIGNAL_CHANNEL="codex-done"
 
 > **Note:** `CODEX_TMP_DIR` は相対パスのみをサポートします。絶対パスを指定するとパス結合が壊れます。
 
+> **Note:** `tmux -S ./collab.sock` で起動した場合、`$TMUX` 環境変数に相対パスが格納されます。Claude Code がサブディレクトリで実行されると、ソケットが見つからないエラーが発生する可能性がありましたが、v0.20.1 以降では `codex_resolve_tmux_socket()` が親ディレクトリを遡ってソケットを自動検索します。明示的に `CODEX_TMUX_SOCKET` を設定する必要はありません。
+
 ### バッファ通信
 - `codex_set_buffer "name" "data"` - バッファにデータ書き込み
 - `codex_get_buffer "name"` - バッファからデータ読み取り
@@ -303,7 +305,7 @@ tmux -S ./collab.sock attach-session -t collab
   - デフォルト: `/tmp/tmux-1001/default`（プロジェクト外、sandbox制限あり）
   - プロジェクト内: `./collab.sock`（推奨、`workspace-write` sandboxで動作）
 - 設定変数 `CODEX_TMUX_SOCKET`:
-  - 空（デフォルト）: システムデフォルトソケットを使用
-  - `./collab.sock`: プロジェクト内ソケットを使用（双方向通信に必要）
+  - 空（デフォルト）: `$TMUX` 環境変数から自動検出（v0.20.1+で相対パスも自動解決）
+  - `./collab.sock`: プロジェクト内ソケットを明示的に指定（通常は不要）
 - Codex sandbox: `workspace-write` ではプロジェクト外アクセス不可
 - inotify-tools: 未インストール
