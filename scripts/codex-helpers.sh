@@ -124,15 +124,91 @@ codex_hash_content() {
 # Tmux Socket Helper
 # ==============================================================================
 
+# Resolve relative socket path from $TMUX environment variable to absolute path
+# Usage: abs_socket=$(codex_resolve_tmux_socket)
+# Returns: Absolute socket path if found, empty string otherwise
+#
+# When tmux is started with `tmux -S ./collab.sock`, the $TMUX variable contains
+# a relative path like `./collab.sock,PID,INDEX`. If the current working directory
+# changes (e.g., Claude Code runs in a subdirectory), tmux commands fail because
+# they can't find the socket at the relative path.
+#
+# This function:
+# 1. Extracts the socket path from $TMUX (first comma-separated field)
+# 2. If it's a relative path, searches upward from cwd to find the socket file
+# 3. Returns the absolute path if found
+codex_resolve_tmux_socket() {
+  local tmux_val="${TMUX:-}"
+
+  # No TMUX variable set
+  if [ -z "$tmux_val" ]; then
+    return 0
+  fi
+
+  # Extract socket path (first field before comma)
+  local socket_path
+  socket_path=$(echo "$tmux_val" | cut -d',' -f1)
+
+  # If already absolute, return as-is
+  if [[ "$socket_path" == /* ]]; then
+    echo "$socket_path"
+    return 0
+  fi
+
+  # Handle relative paths (./foo.sock or foo.sock)
+  # Strip leading ./ if present
+  local socket_name="${socket_path#./}"
+
+  # Search upward from current directory to find the socket file
+  local search_dir
+  search_dir=$(pwd)
+
+  while [ "$search_dir" != "/" ]; do
+    if [ -S "${search_dir}/${socket_name}" ]; then
+      echo "${search_dir}/${socket_name}"
+      return 0
+    fi
+    search_dir=$(dirname "$search_dir")
+  done
+
+  # Check root as last resort
+  if [ -S "/${socket_name}" ]; then
+    echo "/${socket_name}"
+    return 0
+  fi
+
+  # Socket not found - return empty to trigger default tmux fallback
+  # Returning the original relative path would cause the same failure
+  codex_debug "resolve_tmux_socket: socket '$socket_name' not found in any parent directory"
+  return 1
+}
+
 # Get tmux command with optional socket
 # Usage: cmd=$(codex_tmux_cmd)
 #        $cmd list-panes
+#
+# Priority:
+# 1. CODEX_TMUX_SOCKET (explicit override)
+# 2. Resolved socket from $TMUX (handles relative paths)
+# 3. Default tmux (uses tmux's default socket)
 codex_tmux_cmd() {
+  # Explicit socket override takes priority
   if [ -n "${CODEX_TMUX_SOCKET:-}" ]; then
     echo "tmux -S $CODEX_TMUX_SOCKET"
-  else
-    echo "tmux"
+    return 0
   fi
+
+  # Try to resolve socket from $TMUX (handles relative paths)
+  local resolved_socket
+  resolved_socket=$(codex_resolve_tmux_socket)
+
+  if [ -n "$resolved_socket" ]; then
+    echo "tmux -S $resolved_socket"
+    return 0
+  fi
+
+  # Default: use tmux without explicit socket
+  echo "tmux"
 }
 
 # ==============================================================================
