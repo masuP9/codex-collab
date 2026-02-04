@@ -559,7 +559,8 @@ git add -A
 
 **1. Prepare files:**
 
-> **IMPORTANT**: Always include the actual diff output in the review prompt. Codex may not be able to access the repository directly, so embedding the diff ensures the review can proceed.
+> **IMPORTANT**: The diff is saved to a file and referenced by path. This approach is more stable for tmux transmission (consistent prompt size) and handles large diffs reliably.
+> Codex is expected to read the diff file directly. If Codex cannot access the file, it will return a `conditional` verdict indicating the need to retry with embedded diff.
 
 ```bash
 TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
@@ -569,8 +570,11 @@ REVIEW_PROMPT="$TMP_DIR/codex-review-prompt.txt"
 DIFF_FILE="$TMP_DIR/codex-review-diff.txt"
 rm -f "$CODEX_REVIEW"
 
-# Capture the staged diff for inclusion in the prompt
+# Capture the staged diff to a file
 git diff --cached > "$DIFF_FILE"
+
+# Get absolute path for Codex
+DIFF_FILE_ABS="$(cd "$(dirname "$DIFF_FILE")" && pwd)/$(basename "$DIFF_FILE")"
 
 # Source helpers for language directive
 HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
@@ -582,21 +586,26 @@ LANGUAGE="${LANGUAGE:-en}"
 # Get language directive (empty for English)
 LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
 
-# Read the diff content
-DIFF_CONTENT=$(cat "$DIFF_FILE")
-
 cat > "$REVIEW_PROMPT" << EOF
 ${LANG_DIRECTIVE}Review the implementation described below.
-
-**IMPORTANT**: The diff is included below. You do NOT need to run git commands - review the provided diff directly.
 
 ## Original Plan
 [Plan from Step 3]
 
-## Changes Made (git diff --cached)
+## Changes Made
 
-\`\`\`diff
-${DIFF_CONTENT}
+The diff is saved in the following file. Please read it:
+\`\`\`
+$DIFF_FILE_ABS
+\`\`\`
+
+If you cannot access the file, respond with:
+\`\`\`
+---
+status: stop
+verdict: conditional
+message: Unable to access diff file
+---
 \`\`\`
 
 ## Review Request
@@ -622,7 +631,7 @@ Any vulnerabilities?
 
 At the end of your response, include a metadata block:
 
-```
+\`\`\`
 ---
 status: stop
 verdict: pass / conditional / fail
@@ -630,7 +639,7 @@ findings:  # if any issues found
   - severity: low / medium / high
     message: description of issue
 ---
-```
+\`\`\`
 
 Provide your review now.
 EOF
@@ -736,9 +745,29 @@ echo "Detected verdict: $VERDICT"
 
 This happens when Codex couldn't complete the review (e.g., couldn't access files).
 
-1. **Retry with simplified prompt** (up to 3 retries):
-   - Include the diff directly in the prompt (already done in Step 7.1)
-   - Send a follow-up prompt asking for explicit verdict:
+1. **Check for file access failure:**
+   - If response contains "Unable to access diff file" or similar → Retry with embedded diff (fallback)
+
+2. **Retry with embedded diff** (fallback for file access failure):
+   When Codex cannot read the diff file, embed the diff directly in the prompt:
+   ```bash
+   DIFF_CONTENT=$(cat "$DIFF_FILE")
+   cat > "$REVIEW_PROMPT" << EOF
+   前回、差分ファイルにアクセスできなかったようです。
+   差分を直接含めて再度レビューをお願いします。
+
+   ## 差分
+
+   \`\`\`diff
+   ${DIFF_CONTENT}
+   \`\`\`
+
+   verdict: pass / conditional / fail で回答してください。
+   EOF
+   ```
+
+3. **Retry with simplified prompt** (up to 3 retries):
+   - If still no verdict, send a follow-up prompt asking for explicit verdict:
    ```
    前回の応答でverdictが確認できませんでした。
 
@@ -749,7 +778,7 @@ This happens when Codex couldn't complete the review (e.g., couldn't access file
    （理由がある場合は簡潔に）
    ```
 
-2. **If still no verdict after retries:**
+4. **If still no verdict after retries:**
    - Log warning: "Could not get verdict from Codex after 3 retries"
    - Treat as `conditional` and continue to 8.3
 
@@ -792,13 +821,21 @@ review_round = 0
 max_rounds = review.max_iterations (default: 5)
 verdict_retries = 0
 max_verdict_retries = 3
+diff_embedded = false  # Track if we've switched to embedded diff mode
 
 WHILE review_round < max_rounds:
   review_round++
 
-  1. Send review request to Codex
+  1. Send review request to Codex (file reference or embedded diff)
   2. Wait for completion
   3. Parse verdict
+
+  IF response contains "Unable to access diff file":
+    # Fallback: retry with embedded diff
+    diff_embedded = true
+    Rebuild prompt with diff content embedded
+    review_round--  # Don't count this as a full round
+    CONTINUE
 
   IF verdict is missing:
     verdict_retries++
