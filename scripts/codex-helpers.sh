@@ -590,10 +590,13 @@ codex_send_prompt_file() {
   local instruction_file="$2"
   shift 2
 
-  # Check if third argument is an end_marker (starts with <<)
+  # Check if third argument is an end_marker
+  # Supported formats:
+  #   - <<RESPONSE_END_xxx>> (full format)
+  #   - RESPONSE_END_xxx (short format, for convenience)
   local end_marker=""
   local target_files=()
-  if [[ "${1:-}" == "<<"* ]]; then
+  if [[ "${1:-}" == "<<"* ]] || [[ "${1:-}" == "RESPONSE_END_"* ]]; then
     end_marker="$1"
     shift
   fi

@@ -274,6 +274,70 @@ test_send_prompt() {
 }
 
 # ==============================================================================
+# Test: codex_send_prompt_file marker parsing
+# ==============================================================================
+test_send_prompt_file_marker_parsing() {
+  echo ""
+  echo "=== Testing: codex_send_prompt_file marker parsing ==="
+
+  # Test the marker detection pattern used in codex_send_prompt_file
+  # Pattern: [[ "$arg" == "<<"* ]] || [[ "$arg" == "RESPONSE_END_"* ]]
+
+  # Test helper: mimics the exact pattern used in codex_send_prompt_file
+  _is_end_marker() {
+    local arg="$1"
+    if [[ "$arg" == "<<"* ]] || [[ "$arg" == "RESPONSE_END_"* ]]; then
+      return 0
+    fi
+    return 1
+  }
+
+  # Test 1: <<RESPONSE_END_xxx>> format (original format)
+  if _is_end_marker "<<RESPONSE_END_123>>"; then
+    pass "marker parsing: <<RESPONSE_END_xxx>> recognized"
+  else
+    fail "marker parsing" "<<RESPONSE_END_xxx>> not recognized as marker"
+  fi
+
+  # Test 2: RESPONSE_END_xxx format (without << >>)
+  # This is the bug fix - should now be recognized
+  if _is_end_marker "RESPONSE_END_123-456"; then
+    pass "marker parsing: RESPONSE_END_xxx recognized"
+  else
+    fail "marker parsing" "RESPONSE_END_xxx not recognized as marker"
+  fi
+
+  # Test 3: Regular filename should NOT be detected as marker
+  if _is_end_marker "src/file.ts"; then
+    fail "marker parsing" "Regular filename incorrectly detected as marker"
+  else
+    pass "marker parsing: regular filename not detected as marker"
+  fi
+
+  # Test 4: NOT_RESPONSE_END_xxx should NOT be detected as marker
+  # (doesn't start with "RESPONSE_END_")
+  if _is_end_marker "NOT_RESPONSE_END_123"; then
+    fail "marker parsing" "NOT_RESPONSE_END_xxx incorrectly detected as marker"
+  else
+    pass "marker parsing: NOT_RESPONSE_END_xxx not detected as marker"
+  fi
+
+  # Test 5: Empty string should NOT be marker
+  if _is_end_marker ""; then
+    fail "marker parsing" "Empty string incorrectly detected as marker"
+  else
+    pass "marker parsing: empty string not detected as marker"
+  fi
+
+  # Test 6: <<any_other>> format (starts with <<)
+  if _is_end_marker "<<CUSTOM_MARKER>>"; then
+    pass "marker parsing: <<CUSTOM_MARKER>> recognized"
+  else
+    fail "marker parsing" "<<CUSTOM_MARKER>> not recognized as marker"
+  fi
+}
+
+# ==============================================================================
 # Test: codex_wait_completion (mock only)
 # ==============================================================================
 test_wait_completion() {
@@ -631,6 +695,9 @@ main() {
   test_get_field
   test_get_status
   test_get_verdict
+
+  # Prompt function tests (no tmux required for marker parsing)
+  test_send_prompt_file_marker_parsing
 
   # tmux-dependent tests
   if [ "$include_tmux" = true ] || [ -n "${TMUX:-}" ]; then
