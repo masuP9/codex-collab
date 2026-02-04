@@ -183,14 +183,47 @@ codex_resolve_tmux_socket() {
   return 1
 }
 
-# Get tmux command with optional socket
-# Usage: cmd=$(codex_tmux_cmd)
-#        $cmd list-panes
+# Execute tmux command with proper socket handling
+# Usage: codex_tmux list-panes -s
+#        codex_tmux display-message -p '#{pane_id}'
 #
-# Priority:
+# This is the preferred way to run tmux commands. It handles:
 # 1. CODEX_TMUX_SOCKET (explicit override)
-# 2. Resolved socket from $TMUX (handles relative paths)
-# 3. Default tmux (uses tmux's default socket)
+# 2. Relative socket paths in $TMUX (auto-resolved to absolute)
+# 3. Default tmux socket
+#
+# Unlike codex_tmux_cmd() which returns a string, this function directly
+# executes tmux, avoiding word-splitting issues in zsh.
+codex_tmux() {
+  # Explicit socket override takes priority
+  if [ -n "${CODEX_TMUX_SOCKET:-}" ]; then
+    tmux -S "$CODEX_TMUX_SOCKET" "$@"
+    return $?
+  fi
+
+  # Try to resolve socket from $TMUX (handles relative paths)
+  local resolved_socket
+  resolved_socket=$(codex_resolve_tmux_socket)
+
+  if [ -n "$resolved_socket" ]; then
+    tmux -S "$resolved_socket" "$@"
+    return $?
+  fi
+
+  # Default: use tmux without explicit socket
+  tmux "$@"
+}
+
+# DEPRECATED: Get tmux command as a string
+# Usage: cmd=$(codex_tmux_cmd)
+#        eval "$cmd list-panes"  # Note: requires eval in zsh!
+#
+# WARNING: This function returns a string like "tmux -S /path/to/socket".
+# In zsh, variable expansion does NOT split on spaces by default, so
+# `$cmd list-panes` fails. Use codex_tmux() instead, which directly
+# executes tmux and works in both bash and zsh.
+#
+# Kept for backward compatibility only.
 codex_tmux_cmd() {
   # Explicit socket override takes priority
   if [ -n "${CODEX_TMUX_SOCKET:-}" ]; then
@@ -235,15 +268,12 @@ codex_verify_pane() {
     return 1
   fi
 
-  # Use codex_tmux_cmd for socket support
-  local tmux_cmd
-  tmux_cmd=$(codex_tmux_cmd)
-  codex_debug "verify_pane: checking pane $pane_id with: $tmux_cmd"
-
   # Check if pane exists using direct query (more reliable than list-panes + grep)
   # display-message -t returns empty string for non-existent panes
+  codex_debug "verify_pane: checking pane $pane_id"
+
   local queried_pane
-  queried_pane=$($tmux_cmd display-message -t "$pane_id" -p '#{pane_id}' 2>/dev/null)
+  queried_pane=$(codex_tmux display-message -t "$pane_id" -p '#{pane_id}' 2>/dev/null)
   if [ -z "$queried_pane" ] || [ "$queried_pane" != "$pane_id" ]; then
     codex_debug "verify_pane: pane $pane_id not found (queried: '$queried_pane')"
     echo "error:pane_not_found"
@@ -253,8 +283,8 @@ codex_verify_pane() {
   # CRITICAL: Verify pane belongs to current session
   # display-message -t can access panes from ANY session, so we must explicitly check
   local current_session pane_session
-  current_session=$($tmux_cmd display-message -p '#{session_id}' 2>/dev/null)
-  pane_session=$($tmux_cmd display-message -t "$pane_id" -p '#{session_id}' 2>/dev/null)
+  current_session=$(codex_tmux display-message -p '#{session_id}' 2>/dev/null)
+  pane_session=$(codex_tmux display-message -t "$pane_id" -p '#{session_id}' 2>/dev/null)
   if [ "$pane_session" != "$current_session" ]; then
     codex_debug "verify_pane: pane $pane_id belongs to different session (pane: $pane_session, current: $current_session)"
     echo "error:wrong_session"
@@ -263,7 +293,7 @@ codex_verify_pane() {
 
   # Check if pane is running Codex
   local pane_cmd
-  pane_cmd=$($tmux_cmd display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null)
+  pane_cmd=$(codex_tmux display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null)
   codex_debug "verify_pane: pane $pane_id running: $pane_cmd"
 
   # Priority 1: Native codex command (most reliable)
@@ -278,7 +308,7 @@ codex_verify_pane() {
     codex_debug "verify_pane: pane $pane_id running node, checking content patterns"
     # Use larger scrollback (-S -2000) to find Codex banner even if scrolled
     local pane_content
-    pane_content=$($tmux_cmd capture-pane -t "$pane_id" -p -S -2000 2>/dev/null)
+    pane_content=$(codex_tmux capture-pane -t "$pane_id" -p -S -2000 2>/dev/null)
 
     # Primary: Codex banner (may scroll out of view)
     if echo "$pane_content" | grep -q "│ >_ OpenAI Codex"; then
@@ -308,10 +338,7 @@ codex_find_pane() {
   local pane_id_file="${1:-$(codex_tmp_path codex-pane-id)}"
   local found_pane=""
 
-  # Use codex_tmux_cmd for socket support
-  local tmux_cmd
-  tmux_cmd=$(codex_tmux_cmd)
-  codex_debug "find_pane: using tmux command: $tmux_cmd"
+  codex_debug "find_pane: starting pane detection"
 
   # Method 1: Check stored pane ID
   if [ -f "$pane_id_file" ]; then
@@ -337,7 +364,7 @@ codex_find_pane() {
 
   # Method 2: Auto-detect Codex pane (within current session only)
   local pane_list
-  pane_list=$($tmux_cmd list-panes -s -F '#{pane_id}' 2>&1)
+  pane_list=$(codex_tmux list-panes -s -F '#{pane_id}' 2>&1)
   if [ $? -ne 0 ]; then
     codex_debug "find_pane: failed to list panes: $pane_list"
     echo "Warning: Failed to list tmux panes" >&2
@@ -351,7 +378,7 @@ codex_find_pane() {
   while IFS= read -r pane; do
     [ -z "$pane" ] && continue
     local pane_cmd
-    pane_cmd=$($tmux_cmd display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null)
+    pane_cmd=$(codex_tmux display-message -t "$pane" -p '#{pane_current_command}' 2>/dev/null)
     codex_debug "find_pane: pane $pane running: $pane_cmd"
 
     # Priority 1: Native codex command (most reliable)
@@ -365,7 +392,7 @@ codex_find_pane() {
     # Priority 2: Node process with Codex patterns (legacy/npm run)
     elif [ "$pane_cmd" = "node" ]; then
       local pane_content
-      pane_content=$($tmux_cmd capture-pane -t "$pane" -p -S -2000 2>/dev/null)
+      pane_content=$(codex_tmux capture-pane -t "$pane" -p -S -2000 2>/dev/null)
       # Check for: banner, prompt character, or typical output patterns
       if echo "$pane_content" | grep -q "│ >_ OpenAI Codex" || \
          echo "$pane_content" | grep -qE "^› |Worked for [0-9]+|You approved codex"; then
@@ -450,8 +477,6 @@ codex_release_lock() {
 # Sends Ctrl+U to clear the current input line
 codex_clear_input() {
   local pane_id="$1"
-  local tmux_cmd
-  tmux_cmd=$(codex_tmux_cmd)
 
   if [ -z "$pane_id" ]; then
     echo "Error: pane_id required" >&2
@@ -459,7 +484,7 @@ codex_clear_input() {
   fi
 
   # Send Ctrl+U to clear the input line
-  $tmux_cmd send-keys -t "$pane_id" C-u
+  codex_tmux send-keys -t "$pane_id" C-u
   sleep 0.1
   return 0
 }
