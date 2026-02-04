@@ -26,6 +26,11 @@ _CODEX_HELPERS_LOADED=1
 : "${CODEX_CHUNK_SIZE:=200}"        # chunk size for chunked sending (characters)
 : "${CODEX_CHUNK_DELAY:=0.02}"      # delay between chunks (seconds)
 
+# Post-marker stabilization settings (Phase 1 fix for TUI async rendering)
+: "${CODEX_STABILIZE_INTERVAL:=0.5}"   # seconds between stability checks
+: "${CODEX_STABILIZE_THRESHOLD:=3}"    # consecutive unchanged checks needed
+: "${CODEX_STABILIZE_MAX_WAIT:=6}"     # max checks (6 * 0.5s = 3s max wait)
+
 # Temporary directory for all working files
 : "${CODEX_TMP_DIR:=./tmp}"
 
@@ -855,6 +860,49 @@ When finished, output exactly: ${end_marker}"
 # Completion Detection Functions (Polling)
 # ==============================================================================
 
+# Wait for pane output to stabilize after marker detection
+# This addresses the TUI async rendering issue where marker appears
+# before the full content is rendered to the pane
+# Usage: _codex_wait_for_stable_output "$PANE_ID" "$INITIAL_HASH"
+# Returns: 0 always (stabilization is best-effort with timeout)
+_codex_wait_for_stable_output() {
+  local pane_id="$1"
+  local initial_hash="$2"
+  local stabilize_interval="${CODEX_STABILIZE_INTERVAL:-0.5}"
+  local stabilize_threshold="${CODEX_STABILIZE_THRESHOLD:-3}"
+  local stabilize_max_wait="${CODEX_STABILIZE_MAX_WAIT:-6}"
+  local capture_lines="${CODEX_CAPTURE_LINES:-5000}"
+
+  local stable_count=0
+  local last_hash="$initial_hash"
+
+  codex_debug "stabilize: waiting for output to stabilize (threshold=$stabilize_threshold, max_wait=$stabilize_max_wait)"
+
+  for i in $(seq 1 "$stabilize_max_wait"); do
+    sleep "$stabilize_interval"
+    local current_output
+    current_output=$(tmux capture-pane -t "$pane_id" -p -S "-$capture_lines" 2>/dev/null)
+    local current_hash
+    current_hash=$(echo "$current_output" | codex_hash_content)
+
+    if [ "$current_hash" = "$last_hash" ]; then
+      stable_count=$((stable_count + 1))
+      codex_debug "stabilize: hash unchanged ($stable_count/$stabilize_threshold)"
+      if [ "$stable_count" -ge "$stabilize_threshold" ]; then
+        codex_debug "stabilize: output stabilized after ${i} checks"
+        return 0
+      fi
+    else
+      stable_count=0
+      last_hash="$current_hash"
+      codex_debug "stabilize: hash changed, resetting counter"
+    fi
+  done
+
+  codex_debug "stabilize: timeout after $stabilize_max_wait checks (proceeding anyway)"
+  return 0
+}
+
 # Wait for Codex completion using marker + idle detection (polling)
 # Usage: codex_wait_completion "$PANE_ID" "$END_MARKER" ["$BEFORE_HASH"]
 # Returns: 0 if completed, 1 if timeout
@@ -878,9 +926,15 @@ codex_wait_completion() {
 
   # First, do a quick check if marker is already present
   local current_output
+  local current_hash
   current_output=$(tmux capture-pane -t "$pane_id" -p -S -5000 2>/dev/null)
-  if echo "$current_output" | grep -qF "$end_marker"; then
+  current_hash=$(echo "$current_output" | codex_hash_content)
+
+  # Only check marker if end_marker is non-empty (avoid grep -qF "" matching everything)
+  if [ -n "$end_marker" ] && echo "$current_output" | grep -qF "$end_marker"; then
     codex_debug "wait_completion: marker already present in output"
+    # Phase 1 fix: Wait for TUI to stabilize after marker detection
+    _codex_wait_for_stable_output "$pane_id" "$current_hash"
     echo "Codex response completed (marker found)" >&2
     return 0
   fi
@@ -898,9 +952,11 @@ codex_wait_completion() {
     local current_hash
     current_hash=$(echo "$current_output" | codex_hash_content)
 
-    # Check for completion marker
-    if echo "$current_output" | grep -qF "$end_marker"; then
+    # Check for completion marker (only if end_marker is non-empty)
+    if [ -n "$end_marker" ] && echo "$current_output" | grep -qF "$end_marker"; then
       codex_debug "wait_completion: marker found at poll $i"
+      # Phase 1 fix: Wait for TUI to stabilize after marker detection
+      _codex_wait_for_stable_output "$pane_id" "$current_hash"
       echo "Codex response completed (marker found)" >&2
       completed=true
       break

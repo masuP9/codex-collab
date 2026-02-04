@@ -906,6 +906,48 @@ test_send_chunked_splitting() {
 }
 
 # ==============================================================================
+# Test: Stabilization configuration defaults
+# ==============================================================================
+test_stabilize_config() {
+  echo ""
+  echo "=== Testing: Stabilization configuration ==="
+
+  # Test that default values are set
+  # These should be set when helpers are sourced
+
+  # Check CODEX_STABILIZE_INTERVAL default
+  local default_interval="${CODEX_STABILIZE_INTERVAL:-}"
+  if [ "$default_interval" = "0.5" ]; then
+    pass "stabilize_config: CODEX_STABILIZE_INTERVAL default is 0.5"
+  else
+    fail "stabilize_config interval" "Expected '0.5', got '$default_interval'"
+  fi
+
+  # Check CODEX_STABILIZE_THRESHOLD default
+  local default_threshold="${CODEX_STABILIZE_THRESHOLD:-}"
+  if [ "$default_threshold" = "3" ]; then
+    pass "stabilize_config: CODEX_STABILIZE_THRESHOLD default is 3"
+  else
+    fail "stabilize_config threshold" "Expected '3', got '$default_threshold'"
+  fi
+
+  # Check CODEX_STABILIZE_MAX_WAIT default
+  local default_max_wait="${CODEX_STABILIZE_MAX_WAIT:-}"
+  if [ "$default_max_wait" = "6" ]; then
+    pass "stabilize_config: CODEX_STABILIZE_MAX_WAIT default is 6"
+  else
+    fail "stabilize_config max_wait" "Expected '6', got '$default_max_wait'"
+  fi
+
+  # Test that _codex_wait_for_stable_output function exists
+  if type _codex_wait_for_stable_output &>/dev/null; then
+    pass "stabilize_config: _codex_wait_for_stable_output function exists"
+  else
+    fail "stabilize_config function" "_codex_wait_for_stable_output function not found"
+  fi
+}
+
+# ==============================================================================
 # Test: codex_get_verdict
 # ==============================================================================
 test_get_verdict() {
@@ -993,6 +1035,9 @@ main() {
 
   # Chunked sending logic tests (no tmux required - tests awk splitting only)
   test_send_chunked_splitting
+
+  # Stabilization configuration tests (no tmux required)
+  test_stabilize_config
 
   # Prompt function tests (no tmux required for marker parsing)
   test_send_prompt_file_marker_parsing
