@@ -36,6 +36,7 @@ exchange:
 review:
   enabled: true              # Enable/disable review iterations
   max_iterations: 5          # Can be higher than exchange (goal is clear, diff is small)
+  max_verdict_retries: 3     # Retries when verdict is missing/unclear from Codex
   user_confirm: never        # Auto-iterate for reviews
 ---
 

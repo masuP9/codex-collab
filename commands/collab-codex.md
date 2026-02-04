@@ -77,6 +77,7 @@ Check for project-specific settings:
 - **Review iteration** (review.*):
   - review.enabled: true
   - review.max_iterations: 5
+  - review.max_verdict_retries: 3 (retries when verdict is missing/unclear)
   - review.user_confirm: never
 
 **Language setting:**
@@ -557,12 +558,23 @@ git add -A
 > **Note:** Temporary files are stored in `./tmp/` directory which is excluded by `.gitignore`, so they won't be included in the review.
 
 **1. Prepare files:**
+
+> **IMPORTANT**: The diff is saved to a file and referenced by path. This approach is more stable for tmux transmission (consistent prompt size) and handles large diffs reliably.
+> Codex is expected to read the diff file directly. If Codex cannot access the file, it will return a `conditional` verdict indicating the need to retry with embedded diff.
+
 ```bash
 TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
 mkdir -p "$TMP_DIR"
 CODEX_REVIEW="$TMP_DIR/codex-review-output.md"
 REVIEW_PROMPT="$TMP_DIR/codex-review-prompt.txt"
+DIFF_FILE="$TMP_DIR/codex-review-diff.txt"
 rm -f "$CODEX_REVIEW"
+
+# Capture the staged diff to a file
+git diff --cached > "$DIFF_FILE"
+
+# Get absolute path for Codex
+DIFF_FILE_ABS="$(cd "$(dirname "$DIFF_FILE")" && pwd)/$(basename "$DIFF_FILE")"
 
 # Source helpers for language directive
 HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
@@ -577,13 +589,24 @@ LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
 cat > "$REVIEW_PROMPT" << EOF
 ${LANG_DIRECTIVE}Review the implementation described below.
 
-**IMPORTANT**: If you reference any files, always re-read them from disk even if you have read them before in this session. Ignore any cached content from earlier in this conversation.
-
 ## Original Plan
 [Plan from Step 3]
 
 ## Changes Made
-[Diff summary]
+
+The diff is saved in the following file. Please read it:
+\`\`\`
+$DIFF_FILE_ABS
+\`\`\`
+
+If you cannot access the file, respond with:
+\`\`\`
+---
+status: stop
+verdict: conditional
+message: Unable to access diff file
+---
+\`\`\`
 
 ## Review Request
 
@@ -608,7 +631,7 @@ Any vulnerabilities?
 
 At the end of your response, include a metadata block:
 
-```
+\`\`\`
 ---
 status: stop
 verdict: pass / conditional / fail
@@ -616,7 +639,7 @@ findings:  # if any issues found
   - severity: low / medium / high
     message: description of issue
 ---
-```
+\`\`\`
 
 Provide your review now.
 EOF
@@ -688,42 +711,168 @@ done
 
 ### Step 8: Handle Review Result
 
-**If PASS:**
-Report completion to user with summary
+**CRITICAL: Always iterate until PASS is received or max iterations reached.**
 
-**If CONDITIONAL or FAIL (with review.enabled: true):**
+Claude must NOT give up after a single review response. The review loop should continue until:
+- Verdict is `pass`
+- Max iterations reached (default: 5)
+- User explicitly requests to stop
 
-**8a. Review Iteration Loop:**
+**8.0 Parse verdict from response:**
 
-1. **Check if review iteration is enabled:**
-   - If `review.enabled: false` → Present issues to user, no auto-iteration
-   - If `review.enabled: true` → Continue with iteration
+Extract the verdict from Codex's response:
 
-2. **Track review iteration state:**
-   - Increment review round counter
-   - Check if round < review.max_iterations (default: 5)
+```bash
+# Extract verdict from the captured output
+# Look for "verdict:" in the metadata block or in the response text
+VERDICT=$(grep -i "verdict:" "$CODEX_REVIEW" | tail -1 | sed 's/.*verdict:[[:space:]]*//' | tr '[:upper:]' '[:lower:]' | tr -d ' ')
 
-3. **Apply fixes:**
-   - Address findings from the review
-   - Track all modifications
+# Also check for verdict patterns in the response body
+if [ -z "$VERDICT" ] || [ "$VERDICT" = "pass/conditional/fail" ]; then
+  if grep -qi "verdict.*pass" "$CODEX_REVIEW"; then
+    VERDICT="pass"
+  elif grep -qi "verdict.*conditional" "$CODEX_REVIEW"; then
+    VERDICT="conditional"
+  elif grep -qi "verdict.*fail" "$CODEX_REVIEW"; then
+    VERDICT="fail"
+  fi
+fi
 
-4. **User confirmation (based on review.user_confirm setting):**
-   - `never` (default): Auto-iterate without confirmation
-   - `always`: Confirm each round
-   - `on_important`: Confirm only for high-severity findings
+echo "Detected verdict: $VERDICT"
+```
 
-5. **Re-request review:**
-   - Stage changes with `git add -A`
-   - Launch Codex with updated diff
-   - Return to Step 8
+**8.1 If verdict is missing or unclear:**
 
-6. **Force stop conditions:**
-   - round >= review.max_iterations → Report remaining issues to user
-   - PASS verdict received → Complete
-   - User requests manual handling → Exit loop
+This happens when Codex couldn't complete the review (e.g., couldn't access files).
 
-**If review.enabled: false:**
-Present issues to user and discuss next steps
+1. **Check for file access failure:**
+   - If response contains "Unable to access diff file" or similar → Retry with embedded diff (fallback)
+
+2. **Retry with embedded diff** (fallback for file access failure):
+   When Codex cannot read the diff file, embed the diff directly in the prompt:
+   ```bash
+   DIFF_CONTENT=$(cat "$DIFF_FILE")
+   cat > "$REVIEW_PROMPT" << EOF
+   前回、差分ファイルにアクセスできなかったようです。
+   差分を直接含めて再度レビューをお願いします。
+
+   ## 差分
+
+   \`\`\`diff
+   ${DIFF_CONTENT}
+   \`\`\`
+
+   verdict: pass / conditional / fail で回答してください。
+   EOF
+   ```
+
+3. **Retry with simplified prompt** (up to 3 retries):
+   - If still no verdict, send a follow-up prompt asking for explicit verdict:
+   ```
+   前回の応答でverdictが確認できませんでした。
+
+   上記の差分を確認して、以下の形式で回答してください：
+
+   verdict: pass / conditional / fail
+
+   （理由がある場合は簡潔に）
+   ```
+
+4. **If still no verdict after retries:**
+   - Log warning: "Could not get verdict from Codex after 3 retries"
+   - Treat as `conditional` and continue to 8.3
+
+**8.2 If PASS:**
+
+Report completion to user with summary. Task complete.
+
+**8.3 If CONDITIONAL:**
+
+Conditional means the implementation is acceptable but has room for improvement.
+
+1. **Check for specific findings:**
+   - If Codex provided specific issues → Apply fixes and re-request review
+   - If no specific issues (e.g., "couldn't access files") → Ask Codex to re-review with diff provided
+
+2. **Re-review with clarification:**
+   ```
+   前回「conditional」でしたが、具体的な修正点が不明確でした。
+
+   以下の差分を確認し、具体的な問題があれば指摘してください。
+   問題がなければ「verdict: pass」としてください。
+
+   [diff content]
+   ```
+
+3. **Continue iteration** until pass or max iterations
+
+**8.4 If FAIL:**
+
+1. **Extract specific issues** from the review
+2. **Apply fixes** based on Codex's feedback
+3. **Stage changes:** `git add -A`
+4. **Re-request review** with updated diff
+5. **Return to Step 8**
+
+**8a. Review Iteration Loop (Full Implementation):**
+
+```
+review_round = 0
+max_rounds = review.max_iterations (default: 5)
+verdict_retries = 0
+max_verdict_retries = 3
+diff_embedded = false  # Track if we've switched to embedded diff mode
+
+WHILE review_round < max_rounds:
+  review_round++
+
+  1. Send review request to Codex (file reference or embedded diff)
+  2. Wait for completion
+  3. Parse verdict
+
+  IF response contains "Unable to access diff file":
+    # Fallback: retry with embedded diff
+    diff_embedded = true
+    Rebuild prompt with diff content embedded
+    review_round--  # Don't count this as a full round
+    CONTINUE
+
+  IF verdict is missing:
+    verdict_retries++
+    IF verdict_retries < max_verdict_retries:
+      Send follow-up asking for explicit verdict
+      CONTINUE (don't increment review_round)
+    ELSE:
+      verdict = "conditional" (fallback)
+
+  IF verdict == "pass":
+    BREAK → Success
+
+  IF verdict == "conditional":
+    IF specific_findings_exist:
+      Apply fixes
+    ELSE:
+      Re-request with clarification
+    CONTINUE
+
+  IF verdict == "fail":
+    Apply fixes based on findings
+    CONTINUE
+
+IF review_round >= max_rounds AND verdict != "pass":
+  Report: "Max review iterations reached. Final verdict: {verdict}"
+  Ask user if they want to continue or accept current state
+```
+
+**User confirmation (based on review.user_confirm setting):**
+- `never` (default): Auto-iterate without confirmation
+- `always`: Confirm each round
+- `on_important`: Confirm only for high-severity findings
+
+**Force stop conditions:**
+- round >= review.max_iterations → Report to user, ask for direction
+- User explicitly cancels
+- Repeated identical feedback (infinite loop detection)
 
 ### Step 9: Cleanup
 
@@ -792,7 +941,7 @@ If timeout (`codex.wait_timeout`, default 180s) without completion marker:
 - **Legacy mode**: The old `codex exec` approach with signal-based completion is still documented but not the default. Use it when you need stateless execution (no context preservation).
 - **Important**: Stage changes with `git add -A` before review so Codex can see new files (ensures visibility regardless of file discovery method)
 - **Multi-turn exchange**: Use `next_action: continue|stop` to control exchange flow. Planning exchange max iterations default is 3.
-- **Review iteration**: Enabled by default (`review.enabled: true`). Max iterations default is 5 (higher than exchange because goal is clear and diff is small).
+- **Review iteration**: Enabled by default (`review.enabled: true`). **Claude must NOT give up after a single review** - continue iterating until `pass` is received or max iterations (default: 5) is reached. If verdict is missing/unclear, retry up to 3 times before treating as `conditional`. Always include the actual diff in review prompts so Codex can review without file access.
 - **Independent settings**: `exchange.*` and `review.*` are completely independent (no inheritance). Each can be configured separately.
 - **Timeout configuration**: `codex.wait_timeout` (default: 180s, max: 600s) controls how long to wait for Codex. Set Bash tool's `timeout` parameter to `min(wait_timeout + 60, 600) * 1000` milliseconds.
 
