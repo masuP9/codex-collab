@@ -465,11 +465,13 @@ test_tmux_cmd() {
   echo ""
   echo "=== Testing: codex_tmux_cmd ==="
 
-  # Save original value
+  # Save original values
   local orig_socket="${CODEX_TMUX_SOCKET:-}"
+  local orig_tmux="${TMUX:-}"
 
-  # Test without socket
+  # Test without socket (clear both CODEX_TMUX_SOCKET and TMUX to prevent socket resolution)
   CODEX_TMUX_SOCKET=""
+  TMUX=""
   local result
   result=$(codex_tmux_cmd)
   if [ "$result" = "tmux" ]; then
@@ -478,7 +480,7 @@ test_tmux_cmd() {
     fail "tmux_cmd without socket" "Expected 'tmux', got '$result'"
   fi
 
-  # Test with socket
+  # Test with explicit socket (CODEX_TMUX_SOCKET takes priority)
   CODEX_TMUX_SOCKET="./test.sock"
   result=$(codex_tmux_cmd)
   if [ "$result" = "tmux -S ./test.sock" ]; then
@@ -487,8 +489,13 @@ test_tmux_cmd() {
     fail "tmux_cmd with socket" "Expected 'tmux -S ./test.sock', got '$result'"
   fi
 
-  # Restore
+  # Restore original values
   CODEX_TMUX_SOCKET="$orig_socket"
+  if [ -n "$orig_tmux" ]; then
+    TMUX="$orig_tmux"
+  else
+    unset TMUX
+  fi
 }
 
 # ==============================================================================
@@ -620,6 +627,285 @@ test_get_status() {
 }
 
 # ==============================================================================
+# Test: codex_get_language_directive
+# ==============================================================================
+test_get_language_directive() {
+  echo ""
+  echo "=== Testing: codex_get_language_directive ==="
+
+  # Test 1: English returns empty
+  local result
+  result=$(codex_get_language_directive "en")
+  if [ -z "$result" ]; then
+    pass "lang_directive: en returns empty"
+  else
+    fail "lang_directive en" "Expected empty, got '$result'"
+  fi
+
+  # Test 2: Japanese returns directive
+  result=$(codex_get_language_directive "ja")
+  if echo "$result" | grep -q "日本語で回答してください"; then
+    pass "lang_directive: ja returns Japanese directive"
+  else
+    fail "lang_directive ja" "Expected Japanese directive, got '$result'"
+  fi
+
+  # Test 3: Empty string returns empty
+  result=$(codex_get_language_directive "")
+  if [ -z "$result" ]; then
+    pass "lang_directive: empty returns empty"
+  else
+    fail "lang_directive empty" "Expected empty, got '$result'"
+  fi
+
+  # Test 4: Other language returns directive with that language
+  result=$(codex_get_language_directive "fr")
+  if echo "$result" | grep -q "frで回答してください"; then
+    pass "lang_directive: other language returns directive"
+  else
+    fail "lang_directive fr" "Expected French directive, got '$result'"
+  fi
+}
+
+# ==============================================================================
+# Test: codex_acquire_lock / codex_release_lock
+# ==============================================================================
+test_lock_acquire_release() {
+  echo ""
+  echo "=== Testing: codex_acquire_lock / codex_release_lock ==="
+
+  # Use a unique test directory
+  local test_tmp
+  test_tmp=$(mktemp -d)
+  local original_tmp="${CODEX_TMP_DIR:-}"
+  export CODEX_TMP_DIR="$test_tmp"
+
+  # Test 1: First acquire should succeed
+  if codex_acquire_lock "test-lock-$$" >/dev/null 2>&1; then
+    pass "lock_acquire: first acquire succeeds"
+  else
+    fail "lock_acquire" "first acquire failed"
+  fi
+
+  # Test 2: Second acquire (same lock, same process) should succeed
+  # Note: flock allows same process to re-acquire
+  # So we test by checking lock file exists
+  if [ -f "$test_tmp/test-lock-$$.lock" ]; then
+    pass "lock_acquire: lock file created"
+  else
+    fail "lock_acquire" "lock file not created"
+  fi
+
+  # Test 3: Release should succeed
+  if codex_release_lock >/dev/null 2>&1; then
+    pass "lock_release: release succeeds"
+  else
+    fail "lock_release" "release failed"
+  fi
+
+  # Cleanup
+  rm -rf "$test_tmp"
+  if [ -n "$original_tmp" ]; then
+    export CODEX_TMP_DIR="$original_tmp"
+  else
+    unset CODEX_TMP_DIR
+  fi
+}
+
+# ==============================================================================
+# Test: codex_resolve_tmux_socket
+# ==============================================================================
+test_resolve_tmux_socket() {
+  echo ""
+  echo "=== Testing: codex_resolve_tmux_socket ==="
+
+  local original_tmux="${TMUX:-}"
+
+  # Test 1: Absolute path should be returned as-is
+  TMUX="/tmp/test-socket.sock,12345,0"
+  local result
+  result=$(codex_resolve_tmux_socket)
+  if [ "$result" = "/tmp/test-socket.sock" ]; then
+    pass "resolve_socket: absolute path returned as-is"
+  else
+    fail "resolve_socket absolute" "Expected '/tmp/test-socket.sock', got '$result'"
+  fi
+
+  # Test 2: Empty TMUX should return empty
+  TMUX=""
+  result=$(codex_resolve_tmux_socket)
+  if [ -z "$result" ]; then
+    pass "resolve_socket: empty TMUX returns empty"
+  else
+    fail "resolve_socket empty" "Expected empty, got '$result'"
+  fi
+
+  # Test 3: Relative path with non-existent socket should return error
+  TMUX="./nonexistent.sock,12345,0"
+  if ! codex_resolve_tmux_socket >/dev/null 2>&1; then
+    pass "resolve_socket: nonexistent relative returns error"
+  else
+    fail "resolve_socket nonexistent" "Should return error for nonexistent socket"
+  fi
+
+  # Test 4: Relative path with existing socket (if python3 available)
+  local test_base
+  test_base=$(mktemp -d)
+  mkdir -p "$test_base/child"
+
+  if command -v python3 >/dev/null 2>&1; then
+    # Create a real Unix socket using Python
+    python3 -c "
+import socket
+import sys
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.bind('$test_base/test.sock')
+" 2>/dev/null
+
+    if [ -S "$test_base/test.sock" ]; then
+      # Run from child directory
+      (
+        cd "$test_base/child"
+        TMUX="./test.sock,12345,0"
+        result=$(codex_resolve_tmux_socket)
+        if [ "$result" = "$test_base/test.sock" ]; then
+          pass "resolve_socket: relative path resolved via parent search"
+        else
+          fail "resolve_socket relative" "Expected '$test_base/test.sock', got '$result'"
+        fi
+      )
+    else
+      skip "resolve_socket relative" "Could not create test socket"
+    fi
+    rm -f "$test_base/test.sock"
+  else
+    skip "resolve_socket relative" "python3 not available to create Unix socket"
+  fi
+
+  rm -rf "$test_base"
+
+  # Restore original TMUX
+  if [ -n "$original_tmux" ]; then
+    TMUX="$original_tmux"
+  else
+    unset TMUX
+  fi
+}
+
+# ==============================================================================
+# Test: codex_send_chunked splitting logic
+# ==============================================================================
+test_send_chunked_splitting() {
+  echo ""
+  echo "=== Testing: codex_send_chunked splitting logic ==="
+
+  # We can't easily test the actual sending without tmux,
+  # but we can test the awk-based splitting logic separately
+
+  # Test the awk splitting directly
+  local text="ABCDEFGHIJKLMNO"
+  local chunk_size=5
+  local chunks
+
+  # Use same awk logic as codex_send_chunked
+  chunks=$(printf '%s' "$text" | awk -v size="$chunk_size" '
+    BEGIN { ORS = "|" }
+    {
+      if (NR > 1) content = content "\n"
+      content = content $0
+    }
+    END {
+      len = length(content)
+      if (len == 0) exit
+      for (i = 1; i <= len; i += size) {
+        print substr(content, i, size)
+      }
+    }
+  ')
+
+  # Expected: "ABCDE|FGHIJ|KLMNO|"
+  if [ "$chunks" = "ABCDE|FGHIJ|KLMNO|" ]; then
+    pass "send_chunked: splits evenly divisible text correctly"
+  else
+    fail "send_chunked even split" "Expected 'ABCDE|FGHIJ|KLMNO|', got '$chunks'"
+  fi
+
+  # Test with remainder
+  text="ABCDEFGHIJKLMNOP"  # 16 chars
+  chunks=$(printf '%s' "$text" | awk -v size="$chunk_size" '
+    BEGIN { ORS = "|" }
+    {
+      if (NR > 1) content = content "\n"
+      content = content $0
+    }
+    END {
+      len = length(content)
+      if (len == 0) exit
+      for (i = 1; i <= len; i += size) {
+        print substr(content, i, size)
+      }
+    }
+  ')
+
+  # Expected: "ABCDE|FGHIJ|KLMNO|P|"
+  if [ "$chunks" = "ABCDE|FGHIJ|KLMNO|P|" ]; then
+    pass "send_chunked: splits text with remainder correctly"
+  else
+    fail "send_chunked remainder" "Expected 'ABCDE|FGHIJ|KLMNO|P|', got '$chunks'"
+  fi
+
+  # Test with text shorter than chunk size
+  text="ABC"
+  chunks=$(printf '%s' "$text" | awk -v size="$chunk_size" '
+    BEGIN { ORS = "|" }
+    {
+      if (NR > 1) content = content "\n"
+      content = content $0
+    }
+    END {
+      len = length(content)
+      if (len == 0) exit
+      for (i = 1; i <= len; i += size) {
+        print substr(content, i, size)
+      }
+    }
+  ')
+
+  # Expected: "ABC|"
+  if [ "$chunks" = "ABC|" ]; then
+    pass "send_chunked: handles text shorter than chunk size"
+  else
+    fail "send_chunked short" "Expected 'ABC|', got '$chunks'"
+  fi
+
+  # Test with multiline text
+  text=$'Line1\nLine2\nLine3'
+  chunks=$(printf '%s' "$text" | awk -v size=10 '
+    BEGIN { ORS = "|" }
+    {
+      if (NR > 1) content = content "\n"
+      content = content $0
+    }
+    END {
+      len = length(content)
+      if (len == 0) exit
+      for (i = 1; i <= len; i += size) {
+        print substr(content, i, size)
+      }
+    }
+  ')
+
+  # "Line1\nLine2\nLine3" is 17 chars
+  # Chunks of 10: "Line1\nLine" and "2\nLine3"
+  local expected=$'Line1\nLine|2\nLine3|'
+  if [ "$chunks" = "$expected" ]; then
+    pass "send_chunked: preserves newlines in multiline text"
+  else
+    fail "send_chunked multiline" "Newlines not preserved correctly"
+  fi
+}
+
+# ==============================================================================
 # Test: codex_get_verdict
 # ==============================================================================
 test_get_verdict() {
@@ -695,6 +981,18 @@ main() {
   test_get_field
   test_get_status
   test_get_verdict
+
+  # Language directive tests (no tmux required)
+  test_get_language_directive
+
+  # Lock mechanism tests (no tmux required)
+  test_lock_acquire_release
+
+  # Socket resolution tests (no tmux required, but may skip some cases)
+  test_resolve_tmux_socket
+
+  # Chunked sending logic tests (no tmux required - tests awk splitting only)
+  test_send_chunked_splitting
 
   # Prompt function tests (no tmux required for marker parsing)
   test_send_prompt_file_marker_parsing
