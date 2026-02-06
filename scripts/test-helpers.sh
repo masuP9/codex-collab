@@ -167,6 +167,79 @@ test_check_tmux() {
 }
 
 # ==============================================================================
+# Test: codex_sanitize_pane_id
+# ==============================================================================
+test_sanitize_pane_id() {
+  echo ""
+  echo "=== Testing: codex_sanitize_pane_id ==="
+
+  # Test normal pane ID
+  local result
+  result=$(codex_sanitize_pane_id "%1")
+  if [ "$result" = "%1" ]; then
+    pass "sanitize_pane_id: normal pane ID preserved"
+  else
+    fail "sanitize_pane_id normal" "Expected '%1', got '$result'"
+  fi
+
+  # Test pane ID with trailing newline
+  result=$(codex_sanitize_pane_id $'%1\n')
+  if [ "$result" = "%1" ]; then
+    pass "sanitize_pane_id: removes trailing newline"
+  else
+    fail "sanitize_pane_id newline" "Expected '%1', got '$result'"
+  fi
+
+  # Test pane ID with prefix garbage (reported bug pattern)
+  result=$(codex_sanitize_pane_id $'pane_cmd=claude\n%1')
+  if [ "$result" = "%1" ]; then
+    pass "sanitize_pane_id: extracts ID from garbage prefix"
+  else
+    fail "sanitize_pane_id garbage" "Expected '%1', got '$result'"
+  fi
+
+  # Test pane ID with spaces
+  result=$(codex_sanitize_pane_id "  %42  ")
+  if [ "$result" = "%42" ]; then
+    pass "sanitize_pane_id: extracts ID from whitespace"
+  else
+    fail "sanitize_pane_id whitespace" "Expected '%42', got '$result'"
+  fi
+
+  # Test empty input
+  result=$(codex_sanitize_pane_id "")
+  if [ -z "$result" ]; then
+    pass "sanitize_pane_id: empty input returns empty"
+  else
+    fail "sanitize_pane_id empty" "Expected empty, got '$result'"
+  fi
+
+  # Test invalid input (no pane ID pattern)
+  result=$(codex_sanitize_pane_id "invalid_input")
+  if [ -z "$result" ]; then
+    pass "sanitize_pane_id: invalid input returns empty"
+  else
+    fail "sanitize_pane_id invalid" "Expected empty, got '$result'"
+  fi
+
+  # Test multiple pane IDs (should return first)
+  result=$(codex_sanitize_pane_id "%1 %2 %3")
+  if [ "$result" = "%1" ]; then
+    pass "sanitize_pane_id: multiple IDs returns first"
+  else
+    fail "sanitize_pane_id multiple" "Expected '%1', got '$result'"
+  fi
+
+  # Test larger pane ID numbers
+  result=$(codex_sanitize_pane_id "%12345")
+  if [ "$result" = "%12345" ]; then
+    pass "sanitize_pane_id: large pane ID number preserved"
+  else
+    fail "sanitize_pane_id large" "Expected '%12345', got '$result'"
+  fi
+}
+
+# ==============================================================================
 # Test: codex_verify_pane (requires tmux)
 # ==============================================================================
 test_verify_pane() {
@@ -1041,6 +1114,9 @@ main() {
 
   # Prompt function tests (no tmux required for marker parsing)
   test_send_prompt_file_marker_parsing
+
+  # Pane ID sanitization tests (no tmux required)
+  test_sanitize_pane_id
 
   # tmux-dependent tests
   if [ "$include_tmux" = true ] || [ -n "${TMUX:-}" ]; then
