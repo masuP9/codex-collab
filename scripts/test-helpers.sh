@@ -237,6 +237,54 @@ test_sanitize_pane_id() {
   else
     fail "sanitize_pane_id large" "Expected '%12345', got '$result'"
   fi
+
+  # Edge case: multiline garbage with junk after pane ID
+  result=$(codex_sanitize_pane_id $'pane_cmd=claude\n%1\njunk_after')
+  if [ "$result" = "%1" ]; then
+    pass "sanitize_pane_id: multiline garbage with trailing junk"
+  else
+    fail "sanitize_pane_id multiline junk" "Expected '%1', got '$result'"
+  fi
+
+  # Edge case: carriage return (Windows-style line ending)
+  result=$(codex_sanitize_pane_id $'%3\r\n')
+  if [ "$result" = "%3" ]; then
+    pass "sanitize_pane_id: handles CR+LF"
+  else
+    fail "sanitize_pane_id CR" "Expected '%3', got '$result'"
+  fi
+
+  # Edge case: bare % without number
+  result=$(codex_sanitize_pane_id "%")
+  if [ -z "$result" ]; then
+    pass "sanitize_pane_id: bare % returns empty"
+  else
+    fail "sanitize_pane_id bare %" "Expected empty, got '$result'"
+  fi
+
+  # Edge case: %N followed by letters (e.g. %1a)
+  result=$(codex_sanitize_pane_id "%1a")
+  if [ "$result" = "%1" ]; then
+    pass "sanitize_pane_id: extracts %1 from %1a"
+  else
+    fail "sanitize_pane_id %1a" "Expected '%1', got '$result'"
+  fi
+
+  # Edge case: multiple IDs on separate lines
+  result=$(codex_sanitize_pane_id $'%1\n%2')
+  if [ "$result" = "%1" ]; then
+    pass "sanitize_pane_id: multiple IDs on lines returns first"
+  else
+    fail "sanitize_pane_id multiline IDs" "Expected '%1', got '$result'"
+  fi
+
+  # Edge case: labeled format (pane_id=%1)
+  result=$(codex_sanitize_pane_id "pane_id=%1")
+  if [ "$result" = "%1" ]; then
+    pass "sanitize_pane_id: extracts from labeled format"
+  else
+    fail "sanitize_pane_id labeled" "Expected '%1', got '$result'"
+  fi
 }
 
 # ==============================================================================
