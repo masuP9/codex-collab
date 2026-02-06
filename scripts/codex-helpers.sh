@@ -250,6 +250,37 @@ codex_tmux_cmd() {
 }
 
 # ==============================================================================
+# Pane ID Sanitization
+# ==============================================================================
+
+# Sanitize pane ID to ensure it only contains valid characters
+# This guards against environment issues where extra output may be captured
+# Usage: clean_pane=$(codex_sanitize_pane_id "$raw_pane")
+# Returns: Clean pane ID (%N format) or empty if invalid
+#
+# Background: In some execution environments (e.g., Claude Code's Bash tool),
+# stdout/stderr mixing or trace output may cause extra characters to be captured
+# alongside the actual pane ID. This function extracts only the valid pane ID.
+codex_sanitize_pane_id() {
+  local raw="$1"
+
+  # Early return if empty
+  if [ -z "$raw" ]; then
+    return 0
+  fi
+
+  # Extract the pane ID pattern (%N where N is a number)
+  # Use grep -o to extract only the matching part
+  # If multiple matches exist (shouldn't happen), take the first one
+  local clean
+  clean=$(printf '%s' "$raw" | grep -oE '%[0-9]+' | head -1)
+
+  if [ -n "$clean" ]; then
+    printf '%s' "$clean"
+  fi
+}
+
+# ==============================================================================
 # Pane Detection Functions
 # ==============================================================================
 
@@ -348,19 +379,26 @@ codex_find_pane() {
   # Method 1: Check stored pane ID
   if [ -f "$pane_id_file" ]; then
     local stored_pane
-    stored_pane=$(cat "$pane_id_file")
+    # Read and sanitize stored pane ID
+    stored_pane=$(codex_sanitize_pane_id "$(cat "$pane_id_file")")
     codex_debug "find_pane: checking stored pane ID: $stored_pane"
 
-    local verify_result
-    verify_result=$(codex_verify_pane "$stored_pane")
-
-    if [ "$verify_result" = "valid" ]; then
-      echo "$stored_pane"
-      echo "Found Codex pane from stored ID: $stored_pane" >&2
-      return 0
+    # Skip verification if sanitization failed (empty result)
+    if [ -z "$stored_pane" ]; then
+      codex_debug "find_pane: stored pane ID failed sanitization"
+      echo "Stored pane ID invalid format, scanning for Codex panes..." >&2
     else
-      codex_debug "find_pane: stored pane invalid: $verify_result"
-      echo "Stored pane $stored_pane is invalid ($verify_result), scanning for Codex panes..." >&2
+      local verify_result
+      verify_result=$(codex_verify_pane "$stored_pane")
+
+      if [ "$verify_result" = "valid" ]; then
+        printf '%s' "$stored_pane"
+        echo "Found Codex pane from stored ID: $stored_pane" >&2
+        return 0
+      else
+        codex_debug "find_pane: stored pane invalid: $verify_result"
+        echo "Stored pane $stored_pane is invalid ($verify_result), scanning for Codex panes..." >&2
+      fi
     fi
   else
     codex_debug "find_pane: no stored pane ID file at $pane_id_file"
@@ -418,20 +456,27 @@ codex_find_pane() {
     codex_debug "find_pane: found $pane_count codex pane(s): $codex_panes"
 
     if [ "$pane_count" -eq 1 ]; then
-      found_pane=$(echo "$codex_panes" | tr -d ' ')
+      found_pane=$(codex_sanitize_pane_id "$codex_panes")
       echo "Auto-detected Codex pane: $found_pane" >&2
     else
       echo "Warning: Multiple Codex panes found ($pane_count): $codex_panes" >&2
-      found_pane=$(echo "$codex_panes" | awk '{print $1}')
+      found_pane=$(codex_sanitize_pane_id "$(echo "$codex_panes" | awk '{print $1}')")
       echo "Using first pane: $found_pane" >&2
       echo "To use a different pane, delete tmp/codex-pane-id and retry" >&2
     fi
 
-    # Save pane ID for future use
-    echo "$found_pane" > "$pane_id_file"
+    # Verify sanitization succeeded
+    if [ -z "$found_pane" ]; then
+      codex_debug "find_pane: pane ID sanitization failed"
+      echo "Error: Failed to extract valid pane ID" >&2
+      return 1
+    fi
+
+    # Save sanitized pane ID for future use (use printf to avoid trailing newline issues)
+    printf '%s' "$found_pane" > "$pane_id_file"
     codex_debug "find_pane: saved pane ID to $pane_id_file"
     echo "Saved pane ID to $pane_id_file" >&2
-    echo "$found_pane"
+    printf '%s' "$found_pane"
     return 0
   fi
 
@@ -1081,6 +1126,9 @@ codex_launch_interactive_pane() {
   local new_pane
   new_pane=$("${tmux_cmd[@]}" split-window -h -d -c "$work_dir" -P -F '#{pane_id}' "codex -s $sandbox_mode")
 
+  # Sanitize the pane ID immediately to guard against environment issues
+  new_pane=$(codex_sanitize_pane_id "$new_pane")
+
   if [ -z "$new_pane" ]; then
     echo "Error: Failed to get new pane ID" >&2
     return 1
@@ -1110,15 +1158,15 @@ codex_launch_interactive_pane() {
     # Still proceed - pane exists and codex may have a different banner format
   fi
 
-  # Save pane ID for future reuse
+  # Save sanitized pane ID for future reuse (use printf to avoid trailing newline)
   codex_ensure_tmp_dir > /dev/null
-  echo "$new_pane" > "$pane_id_file"
+  printf '%s' "$new_pane" > "$pane_id_file"
   codex_debug "launch_interactive: saved pane ID to $pane_id_file"
 
   # Ensure focus returns to original pane
   "${tmux_cmd[@]}" select-pane -t "$original_pane"
 
-  echo "$new_pane"
+  printf '%s' "$new_pane"
   return 0
 }
 
@@ -1127,7 +1175,10 @@ codex_launch_interactive_pane() {
 # This function:
 # 1. First tries to find an existing Codex pane (codex_find_pane, which internally verifies)
 # 2. If not found or invalid, launches a new interactive pane (codex_launch_interactive_pane)
-# Returns: Pane ID on success, empty on failure
+# Returns: Pane ID on success (sanitized, no trailing newline), empty on failure
+#
+# Note: Output is sanitized to contain only the pane ID (%N format).
+# This guards against environment issues where extra output may be captured.
 codex_get_or_create_pane() {
   local sandbox_mode="${1:-read-only}"
   local pane_id_file="${2:-$(codex_tmp_path codex-pane-id)}"
@@ -1135,15 +1186,17 @@ codex_get_or_create_pane() {
   codex_debug "get_or_create: checking for existing pane"
 
   # Try to find existing pane
-  # Note: codex_find_pane already calls codex_verify_pane internally,
-  # so we trust its result to avoid race conditions from double verification
+  # Note: codex_find_pane already sanitizes its output and calls codex_verify_pane internally
   local existing_pane
   existing_pane=$(codex_find_pane "$pane_id_file" 2>/dev/null)
+
+  # Additional sanitization as defense-in-depth
+  existing_pane=$(codex_sanitize_pane_id "$existing_pane")
 
   if [ -n "$existing_pane" ]; then
     # codex_find_pane already verified the pane, trust the result
     codex_debug "get_or_create: found verified existing pane $existing_pane"
-    echo "$existing_pane"
+    printf '%s' "$existing_pane"
     return 0
   fi
 
@@ -1154,9 +1207,12 @@ codex_get_or_create_pane() {
   local new_pane
   new_pane=$(codex_launch_interactive_pane "$sandbox_mode" "$pane_id_file")
 
+  # Sanitize launch output as well
+  new_pane=$(codex_sanitize_pane_id "$new_pane")
+
   if [ -n "$new_pane" ]; then
     echo "Launched new Codex pane: $new_pane" >&2
-    echo "$new_pane"
+    printf '%s' "$new_pane"
     return 0
   else
     echo "Error: Failed to launch Codex pane" >&2
