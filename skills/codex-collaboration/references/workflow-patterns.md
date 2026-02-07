@@ -142,15 +142,79 @@ Complete
 - Components must have clear interfaces
 - Integration plan needed upfront
 
+## Pattern 5: Claude-Led Type
+
+**Flow**: Claude plans → Codex implements → Claude reviews
+
+**Best for**:
+- Tasks requiring deep codebase understanding for planning
+- When Codex model is optimized for fast execution (codex-mini, o4-mini)
+- Complex refactoring where planning quality matters most
+- When Claude's reasoning strength should drive the architecture
+
+**Workflow**:
+```
+User Request
+    ↓
+Claude: Deep codebase analysis (Read, Glob, Grep)
+    ↓
+Claude: Create detailed implementation plan
+    ↓
+[Optional] Codex: Review plan (壁打ち / consultation)
+    ↓
+User: Approve plan
+    ↓
+Safety Checkpoint (git stash)
+    ↓
+Codex: Implement changes (workspace-write sandbox)
+    ↓
+Claude: Review implementation (git diff + Read)
+    ↓
+[Issues found?] → Codex: Fix → Claude: Re-review
+    ↓
+Complete
+```
+
+**Strengths**:
+- Leverages Claude's deep reasoning for planning
+- Leverages Codex's fast execution for implementation
+- Safety checkpoint protects against implementation errors
+- Claude's review catches issues before completion
+
+**Weaknesses**:
+- Requires workspace-write sandbox (less restrictive)
+- Planning phase may be slower (Claude's thoroughness)
+- Fix iteration limited (default: 3 rounds)
+
+**Settings**:
+- `workflow: claude-leads` (or auto-selected)
+- `claude_leads.sandbox: workspace-write`
+- `claude_leads.consult_codex: true` (optional plan consultation)
+- `claude_leads.safety_checkpoint: stash`
+- `claude_leads.review.max_iterations: 3`
+
+**Comparison with Review Type**:
+
+| Aspect | Review Type (codex-leads) | Claude-Led Type |
+|--------|--------------------------|-----------------|
+| Planning | Codex | Claude |
+| Implementation | Claude | Codex |
+| Review | Codex | Claude |
+| Sandbox | read-only | workspace-write |
+| Consultation | exchange (Codex-led) | consult (Claude-led) |
+| Best model fit | Reasoning (o3 系) | Most models (gpt-5 系, codex-*, o4-mini) |
+
 ## Pattern Selection Guide
 
 | Situation | Recommended Pattern |
 |-----------|---------------------|
-| Standard feature | Review Type |
+| Standard feature | Claude-Led Type (default) |
 | Quick fix | Consultation |
 | Unknown approach | Parallel Exploration |
 | Large task | Divide and Conquer |
 | Critical code | Review Type (strict) |
+| Complex planning needed | Claude-Led Type |
+| Reasoning model (o3 系) | Review Type |
 
 ## Switching Patterns Mid-Task
 
@@ -196,6 +260,7 @@ Start with default pattern. Switch if:
 |---------|-------------|--------------|---------------|
 | Review | 2 (plan + review) | Medium | Base |
 | Review + Exchange | 2-N | Medium-Large | Base × iterations |
+| Claude-Led | 1-2 (consult + impl) + fixes | Medium | Similar to Base |
 | Consultation | 0-N | Small each | Lower |
 | Parallel | 1+ | Large | Higher |
 | Divide | Varies | Large | Highest |

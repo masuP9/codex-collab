@@ -4,11 +4,15 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 
 ## 概要
 
-このプラグインは、Claude Code と Codex の強みを組み合わせた協調ワークフローを提供します。
+このプラグインは、Claude Code と Codex の強みを組み合わせた協調ワークフローを提供します。モデルの特性に応じて最適なワークフローを自動選択します。
 
-**基本パターン（レビュー型）:**
+**Codex-Leads（従来のレビュー型）:**
 - **Codex**: 計画作成・コードレビュー
 - **Claude Code**: 実装
+
+**Claude-Leads（新規）:**
+- **Claude Code**: 深い分析・計画作成・レビュー
+- **Codex**: 高速実装（workspace-write sandbox）
 
 ## インストール
 
@@ -225,16 +229,21 @@ sandbox: read-only
 
 | オプション | デフォルト | 説明 |
 |-----------|-----------|------|
+| `workflow` | `auto` | ワークフロー選択 (auto, codex-leads, claude-leads) |
 | `model` | (Codexデフォルト) | 使用するモデル (o3, o4-mini等) |
-| `sandbox` | `read-only` | サンドボックスモード (read-only, workspace-write, danger-full-access) |
+| `sandbox` | `read-only` | サンドボックスモード (read-only, workspace-write, danger-full-access)。codex-leads用 |
 | `launch.mode` | `auto` | 起動モード (auto, tmux, wt, inline)。autoはtmuxセッション内ならtmux、そうでなければwt→inline |
-| `exchange.enabled` | `true` | Planning exchangeのグローバルキルスイッチ |
+| `exchange.enabled` | `true` | Planning exchangeのグローバルキルスイッチ (codex-leads) |
 | `exchange.max_iterations` | `3` | Planning exchangeの最大ラウンド数 |
 | `exchange.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
 | `exchange.history_mode` | `summarize` | 履歴管理方式: full=全履歴保持, summarize=最新2ラウンドのみ全文 |
-| `review.enabled` | `true` | Review iterationの有効化 |
+| `review.enabled` | `true` | Review iterationの有効化 (codex-leads) |
 | `review.max_iterations` | `5` | Review iterationの最大ラウンド数（ゴールが明確なので多め） |
 | `review.user_confirm` | `never` | レビュー時は自動でイテレーション |
+| `claude_leads.sandbox` | `workspace-write` | Codex実装用サンドボックス (claude-leads) |
+| `claude_leads.consult_codex` | `true` | 計画の壁打ちフェーズ有効化 (claude-leads) |
+| `claude_leads.safety_checkpoint` | `stash` | 実装前チェックポイント (stash, wip-commit, none) |
+| `claude_leads.review.max_iterations` | `3` | Claudeレビュー修正ループの上限 (claude-leads) |
 
 ### Launch Mode について
 
@@ -257,14 +266,53 @@ Codexの起動方法を選択できます:
 
 ## ワークフロー
 
+### Codex-Leads（従来）
+
+Codex が計画・レビュー、Claude が実装するワークフロー。推論に優れたモデル（o3, gpt-5等）に最適。
+
 ```
-1. ユーザー: /collab "機能Xを実装して"
+1. ユーザー: /collab-codex "機能Xを実装して"
 2. Claude Code: タスク分析・Codex向けプロンプト作成
 3. Codex: 計画作成
 4. Claude Code: 計画確認・実装
 5. Codex: レビュー（Pass/Fail/Conditional）
 6. Claude Code: 修正（必要に応じて）・完了報告
 ```
+
+### Claude-Leads（新規）
+
+Claude が計画・レビュー、Codex が実装するワークフロー。高速実行向きモデル（codex-mini, o4-mini等）に最適。
+
+```
+1. ユーザー: /collab-codex "機能Xを実装して"
+2. Claude Code: 深いコードベース分析
+3. Claude Code: 詳細な実装計画を作成
+4. (optional) Codex: 計画をレビュー（壁打ち）
+5. ユーザー: 計画を承認
+6. Safety Checkpoint: git stash で状態保存
+7. Codex: 計画に従い実装（workspace-write sandbox）
+8. Claude Code: 変更をレビュー（git diff + Read）
+9. [問題あり?] → Codex修正 → Claude再レビュー
+10. 完了報告
+```
+
+### ワークフロー自動選択
+
+`workflow: auto`（デフォルト）では、Codex のモデル設定に基づいて自動選択:
+- デフォルト → **claude-leads**（Claude が計画・レビュー、Codex が実装）
+- 推論特化モデル（o3 系）→ **codex-leads**（Codex が計画・レビュー、Claude が実装）
+
+> Claude (Opus 4.6) は深い推論・分析・計画に優れ、最新の Codex モデル（gpt-5 系含む）は正確で高速な実装に優れているため、デフォルトは claude-leads です。
+
+### Claude-Leads の責務境界
+
+| 役割 | 責務 |
+|------|------|
+| **Claude** | 品質ゲート: 分析・計画・レビュー・承認 |
+| **Codex** | 実行エンジン: 計画に従った正確な実装 |
+| **ユーザー** | 最終承認: 計画承認と最終判断 |
+
+> **安全メカニズム**: Safety Checkpoint（git stash）+ 計画外ファイル変更の自動検出 + Claude レビュー
 
 ## 軽量メタデータプロトコル
 

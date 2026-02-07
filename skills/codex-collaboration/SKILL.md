@@ -1,19 +1,25 @@
 ---
 name: Codex Collaboration
-description: This skill should be used when the user asks to "collaborate with Codex", "use Codex for planning", "get Codex review", "delegate to Codex", "Codexと協調", "Codexにレビュー", "Codexに計画を作成させたい", "Codexに任せる", "Codexに委任", "Codexと連携", "Codexに相談", "Codexの意見", or mentions coordinating tasks between Claude Code and Codex CLI.
+description: This skill should be used when the user asks to "collaborate with Codex", "use Codex for planning", "get Codex review", "delegate to Codex", "Codexと協調", "Codexにレビュー", "Codexに計画を作成させたい", "Codexに任せる", "Codexに委任", "Codexと連携", "Codexに相談", "Codexの意見", "Claude plans", "Claude-led", "Claudeが計画", "Claude主導", "Codexに実装させる", "Codexに実装を任せる", "Claudeがレビュー", or mentions coordinating tasks between Claude Code and Codex CLI.
 ---
 
 # Codex Collaboration Skill
 
-Coordinate tasks between Claude Code and OpenAI Codex CLI using a review-based workflow where Codex handles planning and review while Claude Code handles implementation.
+Coordinate tasks between Claude Code and OpenAI Codex CLI using adaptive workflow selection based on model strengths.
 
 ## Overview
 
-This skill enables effective collaboration between two AI systems:
+This skill enables effective collaboration between two AI systems with **two workflow modes**:
+
+**Codex-Leads (従来):**
 - **Codex**: Planning, code review, architectural decisions
 - **Claude Code**: Implementation, file operations, testing
 
-The primary pattern is "Review Type" where Codex creates plans and reviews implementation, while Claude Code executes the actual work.
+**Claude-Leads (新規):**
+- **Claude Code**: Deep analysis, planning, code review
+- **Codex**: Fast implementation with workspace-write sandbox
+
+The workflow is auto-selected based on the Codex model, or can be explicitly configured via the `workflow` setting.
 
 **Key Feature**: tmux環境では、Codexはインタラクティブモードで起動し、ペインは永続化されます。一度起動したペインは再利用され、会話コンテキストが維持されます。WSL/その他の環境では`codex exec`で実行されます。
 
@@ -205,13 +211,18 @@ sandbox: read-only
 Parse YAML frontmatter for:
 - `model`: Codex model to use
 - `sandbox`: read-only | workspace-write | danger-full-access
-- `exchange.enabled`: Enable planning exchange (default: true)
+- `workflow`: Workflow mode (auto | codex-leads | claude-leads, default: auto)
+- `exchange.enabled`: Enable planning exchange (default: true, codex-leads only)
 - `exchange.max_iterations`: Maximum rounds for multi-turn exchange (default: 3)
 - `exchange.user_confirm`: When to ask user confirmation (never | always | on_important)
 - `exchange.history_mode`: How to handle history (full | summarize)
-- `review.enabled`: Enable review iteration (default: true)
+- `review.enabled`: Enable review iteration (default: true, codex-leads only)
 - `review.max_iterations`: Maximum rounds for review iteration (default: 5)
 - `review.user_confirm`: When to ask user confirmation for reviews (default: never)
+- `claude_leads.sandbox`: Sandbox for Codex implementation (default: workspace-write)
+- `claude_leads.consult_codex`: Enable plan consultation phase (default: true)
+- `claude_leads.safety_checkpoint`: Pre-implementation checkpoint (stash | wip-commit | none, default: stash)
+- `claude_leads.review.max_iterations`: Max review-fix iterations (default: 3)
 
 ### Settings Priority
 
@@ -225,7 +236,8 @@ Apply settings in this order (later overrides earlier):
 ### Safe Defaults
 
 Always start with secure defaults:
-- `sandbox: read-only` - Codex cannot modify files
+- `workflow: auto` - Auto-select workflow based on model
+- `sandbox: read-only` - Codex cannot modify files (codex-leads)
 - `exchange.enabled: true` - Planning exchange enabled by default
 - `exchange.max_iterations: 3` - Prevent runaway exchanges
 - `exchange.user_confirm: on_important` - Ask user for major decisions
@@ -233,6 +245,10 @@ Always start with secure defaults:
 - `review.enabled: true` - Review iteration enabled by default
 - `review.max_iterations: 5` - More iterations allowed (goal is clear, diff is small)
 - `review.user_confirm: never` - Auto-iterate without confirmation
+- `claude_leads.sandbox: workspace-write` - Codex can modify project files (claude-leads)
+- `claude_leads.consult_codex: true` - Plan consultation enabled
+- `claude_leads.safety_checkpoint: stash` - Git stash before implementation
+- `claude_leads.review.max_iterations: 3` - Claude review iterations
 
 ## Quality Gates
 
