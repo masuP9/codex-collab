@@ -1,6 +1,6 @@
 ---
 name: collab-codex
-description: Start a collaborative task with Codex (Codex plans/reviews, Claude implements)
+description: Start a collaborative task with Codex (auto-selects workflow based on model strengths)
 argument-hint: [task description]
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 ---
@@ -8,6 +8,11 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 # Codex Collaboration Workflow
 
 Execute a collaborative workflow between Claude Code and Codex CLI.
+
+**Workflow modes** (`workflow` setting):
+- **codex-leads** (従来): Codex が計画・レビュー、Claude が実装
+- **claude-leads** (新規): Claude が計画・レビュー、Codex が実装（workspace-write sandbox）
+- **auto** (default): モデル特性から自動選択
 
 **Launch modes** (`launch.mode` setting):
 - **tmux**: 現在のペインを水平分割し、右側でCodexを実行。フォーカスを奪わない。
@@ -57,28 +62,34 @@ fi
 
 Check for project-specific settings:
 - Read `.claude/codex-collab.local.md` if it exists
-- Extract YAML frontmatter for: model, sandbox, codex, exchange, review settings
+- Extract YAML frontmatter for: model, sandbox, codex, exchange, review, **workflow** settings
 - Apply settings priority: command args > project settings > defaults
 
 **Default settings:**
+- **workflow**: auto (options: auto, codex-leads, claude-leads)
 - model: (Codex default)
-- sandbox: read-only
+- sandbox: read-only (codex-leads) / workspace-write (claude-leads)
 - language: en (Codex response language)
 - **Timeout** (codex.*):
   - codex.wait_timeout: 180 (seconds, max 600)
 - **Launch mode** (launch.*):
   - launch.mode: auto (options: auto, wt, tmux, inline)
   - launch.prefer_attached: true (use existing attached Codex pane if available)
-- **Planning exchange** (exchange.*):
+- **Planning exchange** (exchange.*, codex-leads only):
   - exchange.enabled: true
   - exchange.max_iterations: 3
   - exchange.user_confirm: on_important
   - exchange.history_mode: summarize
-- **Review iteration** (review.*):
+- **Review iteration** (review.*, codex-leads only):
   - review.enabled: true
   - review.max_iterations: 5
   - review.max_verdict_retries: 3 (retries when verdict is missing/unclear)
   - review.user_confirm: never
+- **Claude-leads specific** (claude_leads.*):
+  - claude_leads.sandbox: workspace-write (Codex 実装用 sandbox)
+  - claude_leads.consult_codex: true (壁打ちフェーズを有効化)
+  - claude_leads.safety_checkpoint: stash (options: stash, wip-commit, none)
+  - claude_leads.review.max_iterations: 3 (レビュー修正ループの上限)
 
 **Language setting:**
 When `language` is set to a non-English value (e.g., `ja`), all Codex prompts will be prefixed with a language directive:
@@ -89,6 +100,42 @@ When `language` is set to a non-English value (e.g., `ja`), all Codex prompts wi
 ```
 
 This ensures Codex responds in the specified language regardless of the prompt template language.
+
+### Step 1a: Determine Workflow
+
+After loading settings, determine which workflow to use:
+
+**If `workflow` is explicitly set to `codex-leads` or `claude-leads`:**
+- Use that workflow directly.
+
+**If `workflow` is `auto` (default):**
+
+Determine based on the Codex model setting:
+
+```
+IF model matches reasoning-specialized pattern (o3, o3-*, o3-pro-*):
+  → codex-leads (Codex が計画・レビュー、Claude が実装)
+ELSE:
+  → claude-leads (Claude が計画・レビュー、Codex が実装)
+```
+
+> **Note:** `auto` のデフォルトは `claude-leads`。Claude (Opus 4.6) は深い推論・計画に優れ、最新の Codex モデル（gpt-5 系含む）は正確で高速な実装に優れている。`codex-leads` が選択されるのは、推論特化モデル（o3 系）が明示的に設定されている場合のみ。
+
+Report the selected workflow to the user:
+```
+Workflow: claude-leads (auto-selected, default)
+```
+
+**After workflow is determined:**
+- If `codex-leads` → Continue to **Step 2** (existing workflow)
+- If `claude-leads` → Jump to **Step 2c** (Claude-led workflow)
+
+---
+
+## Codex-Leads Workflow (従来のワークフロー)
+
+> This is the existing workflow where **Codex plans and reviews, Claude implements**.
+> Active when `workflow` is explicitly set to `codex-leads`, or auto-selected for reasoning-specialized models (o3 系).
 
 ### Step 2: Analyze Task
 
@@ -887,6 +934,471 @@ rm -f "$TMP_DIR/codex-plan-output.md" "$TMP_DIR/codex-plan-prompt.txt"
 rm -f "$TMP_DIR/codex-review-output.md" "$TMP_DIR/codex-review-prompt.txt"
 ```
 
+---
+
+## Claude-Leads Workflow (新規ワークフロー)
+
+> This is the default workflow where **Claude plans and reviews, Codex implements**.
+> Active when `workflow` is `claude-leads`, `auto` (default), or auto-selected for most models.
+>
+> **Key difference**: Codex runs with `workspace-write` sandbox to make file changes directly.
+
+**Responsibility Boundary:**
+| Role | Responsibility |
+|------|---------------|
+| **Claude** | Quality gate: deep analysis, planning, review, approval |
+| **Codex** | Execution engine: accurate implementation per plan |
+| **User** | Final approval: plan approval and ultimate decision authority |
+
+> Claude bears responsibility for plan quality and review thoroughness. Codex bears responsibility for faithful execution. The user has final say at the plan approval step (Step 5c).
+
+### Step 2c: Deep Codebase Analysis (Claude)
+
+**Create a task to track progress:**
+
+Use TaskCreate:
+- subject: "Deep codebase analysis for planning"
+- description: "Analyze codebase, identify affected files, understand architecture"
+- activeForm: "Analyzing codebase"
+
+Then use TaskUpdate to set status to `in_progress`.
+
+**Perform deep analysis:**
+
+Claude should thoroughly analyze the codebase using Read, Glob, and Grep:
+
+1. **Understand the task**: Parse the core objective from the task description
+2. **Map affected files**: Use Glob and Grep to find all relevant files
+3. **Read key files**: Read each affected file to understand current implementation
+4. **Understand dependencies**: Trace imports, function calls, and data flow
+5. **Check existing tests**: Find related test files and understand test patterns
+6. **Review recent changes**: Use `git log` to understand recent context
+
+> **Note:** This is where Claude's strength in deep reasoning shines. Take time to thoroughly understand the codebase before creating a plan.
+
+### Step 3c: Create Detailed Implementation Plan (Claude)
+
+**Task transition:**
+1. Mark "Deep codebase analysis for planning" as `completed`
+2. Use TaskCreate:
+   - subject: "Create implementation plan"
+   - description: "Design detailed step-by-step plan based on analysis"
+   - activeForm: "Creating plan"
+3. Use TaskUpdate to set status to `in_progress`
+
+Based on the analysis, create a detailed implementation plan that includes:
+
+1. **Files to Modify**: List each file with type of change (create/modify/delete)
+2. **Implementation Steps**: Numbered steps in execution order with specific code changes
+3. **Risk Assessment**: Potential issues and edge cases
+4. **Test Considerations**: What should be tested
+
+Format the plan clearly so it can be:
+- Presented to the user for approval
+- Sent to Codex as implementation instructions
+
+### Step 4c: Plan Consultation with Codex (Optional)
+
+> This step is optional and controlled by `claude_leads.consult_codex` setting (default: true).
+> Skip this step if `consult_codex: false`.
+
+**Purpose:** Get Codex's perspective on the plan before implementation. This is a "壁打ち" (wall-hitting / brainstorming) phase.
+
+**1. Prepare consultation prompt:**
+
+```bash
+export CODEX_SKILL_CONTEXT=1
+
+# Source helpers
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+if [ -z "$HELPERS" ] || [ ! -f "$HELPERS" ]; then
+  HELPERS="$(pwd)/scripts/codex-helpers.sh"
+fi
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+mkdir -p "$TMP_DIR"
+CONSULT_PROMPT="$TMP_DIR/codex-consult-prompt.txt"
+CONSULT_OUTPUT="$TMP_DIR/codex-consult-output.md"
+rm -f "$CONSULT_OUTPUT"
+
+LANGUAGE="${LANGUAGE:-en}"
+LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
+
+cat > "$CONSULT_PROMPT" << EOF
+${LANG_DIRECTIVE}You are reviewing an implementation plan created by Claude Code before execution.
+
+**IMPORTANT**: If you reference any files, always re-read them from disk.
+
+## Task
+[Task description]
+
+## Proposed Plan
+[Claude's implementation plan from Step 3c]
+
+## Review Request
+
+Please review this plan and provide feedback on:
+
+### 1. Feasibility
+Can this plan be executed as-is? Any missing steps?
+
+### 2. Risks
+Any risks or edge cases not covered?
+
+### 3. Improvements
+Suggestions for better approach or optimization?
+
+### 4. Verdict
+- APPROVE: Plan is solid, proceed with implementation
+- SUGGEST: Plan is acceptable with suggested improvements
+- RETHINK: Significant issues, plan needs revision
+
+## Response Format
+
+At the end of your response, include a metadata block:
+
+\`\`\`
+---
+status: stop
+verdict: approve / suggest / rethink
+suggestions:
+  - suggestion 1
+---
+\`\`\`
+
+Provide your review now.
+EOF
+```
+
+**2. Send to Codex and wait for response:**
+
+Use the same pane management as the codex-leads workflow (get or create pane, send prompt, wait for completion).
+
+**3. Process Codex's feedback:**
+
+- If `verdict: approve` → Proceed to Step 5c
+- If `verdict: suggest` → Incorporate suggestions into the plan, proceed to Step 5c
+- If `verdict: rethink` → Revise plan based on feedback, optionally re-consult
+
+### Step 5c: User Approval
+
+**Task transition:**
+1. Mark "Create implementation plan" as `completed`
+2. Use TaskCreate:
+   - subject: "Get user approval for plan"
+   - description: "Present plan (with Codex feedback if available) for user approval"
+   - activeForm: "Waiting for user approval"
+3. Use TaskUpdate to set status to `in_progress`
+
+Present the plan to the user, including Codex's feedback if consultation was performed.
+
+Use AskUserQuestion to get user approval:
+- Show the plan summary
+- If Codex suggested improvements, highlight them
+- Ask user to approve, modify, or reject the plan
+
+**If user approves** → Continue to Step 6c
+**If user requests modifications** → Update plan and re-present
+**If user rejects** → End workflow
+
+### Step 6c: Safety Checkpoint
+
+**Before Codex makes any changes, save the current state.**
+
+Based on `claude_leads.safety_checkpoint` setting:
+
+**`stash` (default):**
+```bash
+export CODEX_SKILL_CONTEXT=1
+# Save current state
+git stash push -m "codex-collab: pre-implementation checkpoint $(date +%Y%m%d-%H%M%S)"
+echo "Safety checkpoint created (git stash)"
+```
+
+**`wip-commit`:**
+```bash
+export CODEX_SKILL_CONTEXT=1
+git add -A
+git commit -m "WIP: codex-collab pre-implementation checkpoint" --allow-empty
+echo "Safety checkpoint created (WIP commit)"
+```
+
+**`none`:**
+- Skip checkpoint (user accepts risk)
+
+> **Important:** The safety checkpoint ensures you can always revert Codex's changes if something goes wrong. Use `git stash pop` or `git reset HEAD~1` to restore.
+
+### Step 7c: Codex Implementation
+
+**Task transition:**
+1. Mark "Get user approval for plan" as `completed`
+2. Use TaskCreate:
+   - subject: "Codex implements changes"
+   - description: "Send plan to Codex with workspace-write sandbox, monitor implementation"
+   - activeForm: "Codex implementing"
+3. Use TaskUpdate to set status to `in_progress`
+
+**1. Prepare implementation prompt:**
+
+```bash
+export CODEX_SKILL_CONTEXT=1
+
+# Source helpers
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+if [ -z "$HELPERS" ] || [ ! -f "$HELPERS" ]; then
+  HELPERS="$(pwd)/scripts/codex-helpers.sh"
+fi
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+mkdir -p "$TMP_DIR"
+IMPL_PROMPT="$TMP_DIR/codex-impl-prompt.txt"
+IMPL_OUTPUT="$TMP_DIR/codex-impl-output.md"
+rm -f "$IMPL_OUTPUT"
+
+LANGUAGE="${LANGUAGE:-en}"
+LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
+
+cat > "$IMPL_PROMPT" << EOF
+${LANG_DIRECTIVE}You are implementing changes based on a plan created by Claude Code.
+
+**IMPORTANT**: Execute the plan exactly as specified. If you encounter issues, describe them clearly.
+
+## Task
+[Task description]
+
+## Implementation Plan
+[Detailed plan from Step 3c, with any modifications from consultation/user feedback]
+
+## Instructions
+
+1. Implement each step in order
+2. Create/modify/delete files as specified
+3. Follow existing code style and patterns
+4. Do NOT skip any steps
+
+## Response Format
+
+After implementation, include a metadata block:
+
+\`\`\`
+---
+status: stop
+files_changed:
+  - path/to/file1.ts (modified)
+  - path/to/file2.ts (created)
+issues:
+  - description of any issues encountered
+---
+\`\`\`
+
+Begin implementation now.
+EOF
+```
+
+**2. Get or create Codex pane with workspace-write sandbox:**
+
+```bash
+export CODEX_SKILL_CONTEXT=1
+
+# Source helpers
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+if [ -z "$HELPERS" ] || [ ! -f "$HELPERS" ]; then
+  HELPERS="$(pwd)/scripts/codex-helpers.sh"
+fi
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+mkdir -p "$TMP_DIR"
+PANE_ID_FILE="$TMP_DIR/codex-pane-id"
+
+# Claude-leads uses workspace-write sandbox for implementation
+SANDBOX="${CLAUDE_LEADS_SANDBOX:-workspace-write}"
+
+# Determine launch mode
+LAUNCH_MODE="inline"
+if [ -n "$TMUX" ]; then
+  LAUNCH_MODE="tmux"
+elif command -v wt.exe &>/dev/null; then
+  LAUNCH_MODE="wt"
+fi
+echo "Using launch mode: $LAUNCH_MODE (sandbox: $SANDBOX)"
+
+# For tmux mode: get or create persistent Codex pane
+CODEX_PANE=""
+if [ "$LAUNCH_MODE" = "tmux" ]; then
+  CODEX_PANE=$(codex_get_or_create_pane "$SANDBOX" "$PANE_ID_FILE")
+  if [ -z "$CODEX_PANE" ]; then
+    echo "Error: Failed to get or create Codex pane"
+    exit 1
+  fi
+fi
+```
+
+> **Important:** The sandbox is set to `workspace-write` (configurable via `claude_leads.sandbox`). This allows Codex to create and modify files within the project directory.
+
+**3. Send implementation prompt and wait:**
+
+Use the same send/wait pattern as the codex-leads workflow (chunked send + wait_completion).
+
+**4. Launch Codex (wt/inline mode fallback):**
+
+For non-tmux environments, use `codex exec` with workspace-write sandbox:
+
+**wt mode:**
+```bash
+SANDBOX="${CLAUDE_LEADS_SANDBOX:-workspace-write}"
+wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat \"$IMPL_PROMPT\" | codex exec -s \"$SANDBOX\" - 2>&1 | tee \"$IMPL_OUTPUT\"; echo '=== CODEX_DONE ===' >> \"$IMPL_OUTPUT\""
+```
+
+**inline mode:**
+```bash
+SANDBOX="${CLAUDE_LEADS_SANDBOX:-workspace-write}"
+cat "$IMPL_PROMPT" | codex exec -s "$SANDBOX" - 2>&1 | tee "$IMPL_OUTPUT"; echo '=== CODEX_DONE ===' >> "$IMPL_OUTPUT"
+```
+
+### Step 8c: Claude Review
+
+**Task transition:**
+1. Mark "Codex implements changes" as `completed`
+2. Use TaskCreate:
+   - subject: "Review Codex's implementation"
+   - description: "Review changes via git diff and file reading, verify correctness"
+   - activeForm: "Reviewing implementation"
+3. Use TaskUpdate to set status to `in_progress`
+
+**Claude reviews the changes made by Codex:**
+
+**Roles (claude-leads):**
+- **Claude**: Quality gate — responsible for plan, review, and approval
+- **Codex**: Execution engine — responsible for accurate implementation per plan
+- **User**: Final approval authority
+
+1. **Check git diff:**
+```bash
+export CODEX_SKILL_CONTEXT=1
+git diff
+git diff --stat
+```
+
+2. **CRITICAL: Plan-vs-diff validation (mandatory):**
+   Compare `git diff --stat` output against the file list in the implementation plan (Step 3c).
+   - If files **outside the plan** are modified → **immediately halt** and report to user
+   - Ask user whether to: (a) accept the extra changes, (b) revert them, or (c) abort entirely
+   - This is a safety guard since workspace-write sandbox cannot prevent Codex from modifying unplanned files
+
+3. **Read modified files:** Use Read tool to examine each changed file
+4. **Verify against plan:** Check that each step was implemented correctly
+5. **Check for issues:**
+   - Code quality and style consistency
+   - Security vulnerabilities
+   - Missing error handling
+   - Test coverage gaps
+6. **Run lint/test if available:** If the project has lint or test commands configured, run them to catch issues automatically
+
+### Step 9c: Fix Iteration & Completion
+
+**Review iteration loop (Claude-led):**
+
+```
+review_round = 0
+max_rounds = claude_leads.review.max_iterations (default: 3)
+
+WHILE review_round < max_rounds:
+  review_round++
+
+  1. Claude reviews changes (git diff + Read)
+  2. IF issues found:
+     a. Prepare fix instructions for Codex
+     b. Send fix prompt to Codex (workspace-write sandbox)
+     c. Wait for Codex completion
+     d. CONTINUE (re-review)
+  3. IF no issues:
+     BREAK → Success
+
+IF review_round >= max_rounds AND issues remain:
+  Report: "Max review iterations reached. Remaining issues:"
+  List remaining issues
+  Ask user for direction
+```
+
+**Fix prompt template:**
+
+```bash
+export CODEX_SKILL_CONTEXT=1
+
+# Source helpers
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+if [ -z "$HELPERS" ] || [ ! -f "$HELPERS" ]; then
+  HELPERS="$(pwd)/scripts/codex-helpers.sh"
+fi
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+FIX_PROMPT="$TMP_DIR/codex-fix-prompt.txt"
+
+LANGUAGE="${LANGUAGE:-en}"
+LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
+
+cat > "$FIX_PROMPT" << EOF
+${LANG_DIRECTIVE}Fix the following issues found during review.
+
+## Issues to Fix
+[List of specific issues with file paths and line numbers]
+
+## Instructions
+1. Fix each issue as described
+2. Do not change anything else
+3. Preserve existing code style
+
+## Response Format
+\`\`\`
+---
+status: stop
+fixes_applied:
+  - description of fix 1
+  - description of fix 2
+---
+\`\`\`
+EOF
+```
+
+**Completion:**
+
+1. Mark "Review Codex's implementation" as `completed`
+2. **Cleanup temporary files:**
+```bash
+export CODEX_SKILL_CONTEXT=1
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+rm -f "$TMP_DIR/codex-consult-prompt.txt" "$TMP_DIR/codex-consult-output.md"
+rm -f "$TMP_DIR/codex-impl-prompt.txt" "$TMP_DIR/codex-impl-output.md"
+rm -f "$TMP_DIR/codex-fix-prompt.txt"
+```
+3. Report completion to user with summary of changes
+
+---
+
 ## Error Handling
 
 **Launch mode errors:**
@@ -921,6 +1433,10 @@ If timeout (`codex.wait_timeout`, default 180s) without completion marker:
 
 ## Notes
 
+- **Workflow modes**:
+  - **codex-leads**: Traditional workflow. Codex plans/reviews, Claude implements. Uses `read-only` sandbox by default.
+  - **claude-leads**: New workflow. Claude plans/reviews, Codex implements. Uses `workspace-write` sandbox by default.
+  - **auto**: Auto-selects based on Codex model. Default is `claude-leads`. Only reasoning-specialized models (o3 系) trigger `codex-leads`.
 - **Launch modes**:
   - **tmux** (default when in tmux): Launches Codex in **interactive mode** (`codex` not `codex exec`). The pane persists after each task and can be reused for subsequent prompts. Uses `codex_get_or_create_pane` to find existing pane or create new one.
   - **wt**: Windows Terminal new pane. May steal focus (GitHub issue #17460). Uses `codex exec` (pane closes after completion). Uses file polling for completion detection.
@@ -940,9 +1456,12 @@ If timeout (`codex.wait_timeout`, default 180s) without completion marker:
 - Output files are saved in project's `tmp/` directory to share between WSL sessions. This directory is excluded by `.gitignore` so temporary files don't appear in diffs.
 - **Legacy mode**: The old `codex exec` approach with signal-based completion is still documented but not the default. Use it when you need stateless execution (no context preservation).
 - **Important**: Stage changes with `git add -A` before review so Codex can see new files (ensures visibility regardless of file discovery method)
-- **Multi-turn exchange**: Use `next_action: continue|stop` to control exchange flow. Planning exchange max iterations default is 3.
-- **Review iteration**: Enabled by default (`review.enabled: true`). **Claude must NOT give up after a single review** - continue iterating until `pass` is received or max iterations (default: 5) is reached. If verdict is missing/unclear, retry up to 3 times before treating as `conditional`. Always include the actual diff in review prompts so Codex can review without file access.
-- **Independent settings**: `exchange.*` and `review.*` are completely independent (no inheritance). Each can be configured separately.
+- **Multi-turn exchange** (codex-leads only): Use `next_action: continue|stop` to control exchange flow. Planning exchange max iterations default is 3.
+- **Review iteration** (codex-leads): Enabled by default (`review.enabled: true`). **Claude must NOT give up after a single review** - continue iterating until `pass` is received or max iterations (default: 5) is reached. If verdict is missing/unclear, retry up to 3 times before treating as `conditional`. Always include the actual diff in review prompts so Codex can review without file access.
+- **Claude-led review** (claude-leads): Claude reviews Codex's changes via `git diff` + Read. If issues found, sends fix instructions to Codex. Max iterations controlled by `claude_leads.review.max_iterations` (default: 3).
+- **Safety checkpoint** (claude-leads): Before Codex implementation, save state via git stash (default), WIP commit, or skip. Configurable via `claude_leads.safety_checkpoint`.
+- **Plan consultation** (claude-leads): Optional Codex review of Claude's plan before implementation. Controlled by `claude_leads.consult_codex` (default: true).
+- **Independent settings**: `exchange.*` and `review.*` are completely independent (no inheritance). Each can be configured separately. `claude_leads.*` settings are only used in claude-leads workflow.
 - **Timeout configuration**: `codex.wait_timeout` (default: 180s, max: 600s) controls how long to wait for Codex. Set Bash tool's `timeout` parameter to `min(wait_timeout + 60, 600) * 1000` milliseconds.
 
 ## Compact Recovery
@@ -954,7 +1473,7 @@ If you've been compacted during this workflow:
 3. Read `tmp/codex-pane-id` if Codex pane was attached
 4. Resume from the current step
 
-**Task to Step mapping:**
+**Task to Step mapping (codex-leads):**
 | Task | Resume at |
 |------|-----------|
 | "Analyze task and gather context" | Step 2 |
@@ -963,7 +1482,16 @@ If you've been compacted during this workflow:
 | "Implement changes" | Step 6 |
 | "Request review from Codex" | Step 7 |
 
-**Recovery example:**
+**Task to Step mapping (claude-leads):**
+| Task | Resume at |
+|------|-----------|
+| "Deep codebase analysis for planning" | Step 2c |
+| "Create implementation plan" | Step 3c |
+| "Get user approval for plan" | Step 5c |
+| "Codex implements changes" | Step 7c |
+| "Review Codex's implementation" | Step 8c |
+
+**Recovery example (codex-leads):**
 ```
 TaskList shows:
 - [completed] Analyze task and gather context
@@ -972,4 +1500,16 @@ TaskList shows:
 → Resume at Step 3: check tmp/codex-plan-output.md for Codex response
 → If output exists with completion marker → proceed to Step 5
 → If no output → re-run Codex request
+```
+
+**Recovery example (claude-leads):**
+```
+TaskList shows:
+- [completed] Deep codebase analysis for planning
+- [completed] Create implementation plan
+- [in_progress] Codex implements changes
+
+→ Resume at Step 7c: check tmp/codex-impl-output.md for Codex response
+→ If output exists → proceed to Step 8c (Claude Review)
+→ If no output → re-send implementation prompt
 ```
