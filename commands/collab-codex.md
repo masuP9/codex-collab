@@ -1,6 +1,6 @@
 ---
 name: collab-codex
-description: Start a collaborative task with Codex (auto-selects workflow based on model strengths)
+description: Start a collaborative task with Codex (default: codex-leads workflow)
 argument-hint: [task description]
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 ---
@@ -12,7 +12,7 @@ Execute a collaborative workflow between Claude Code and Codex CLI.
 **Workflow modes** (`workflow` setting):
 - **codex-leads** (従来): Codex が計画・レビュー、Claude が実装
 - **claude-leads** (新規): Claude が計画・レビュー、Codex が実装（workspace-write sandbox）
-- **auto** (default): モデル特性から自動選択
+- **auto** (default): 常に codex-leads を選択（明示的に `claude-leads` を指定した場合のみ Claude 主導）
 
 **Launch modes** (`launch.mode` setting):
 - **tmux**: 現在のペインを水平分割し、右側でCodexを実行。フォーカスを奪わない。
@@ -66,7 +66,7 @@ Check for project-specific settings:
 - Apply settings priority: command args > project settings > defaults
 
 **Default settings:**
-- **workflow**: auto (options: auto, codex-leads, claude-leads)
+- **workflow**: auto (options: auto, codex-leads, claude-leads; auto は常に codex-leads を選択)
 - model: (Codex default)
 - sandbox: read-only (codex-leads) / workspace-write (claude-leads)
 - language: en (Codex response language)
@@ -110,20 +110,13 @@ After loading settings, determine which workflow to use:
 
 **If `workflow` is `auto` (default):**
 
-Determine based on the Codex model setting:
+Always select `codex-leads`.
 
-```
-IF model matches reasoning-specialized pattern (o3, o3-*, o3-pro-*):
-  → codex-leads (Codex が計画・レビュー、Claude が実装)
-ELSE:
-  → claude-leads (Claude が計画・レビュー、Codex が実装)
-```
-
-> **Note:** `auto` のデフォルトは `claude-leads`。Claude (Opus 4.6) は深い推論・計画に優れ、最新の Codex モデル（gpt-5 系含む）は正確で高速な実装に優れている。`codex-leads` が選択されるのは、推論特化モデル（o3 系）が明示的に設定されている場合のみ。
+> **Note:** `auto` は常に `codex-leads` を選択する。`claude-leads` はClaude側のコンテキスト/ターン消費が大きく、Codex実装待ちの間にタイムアウトする問題があるため、明示的に `workflow: claude-leads` を指定した場合のみ有効。
 
 Report the selected workflow to the user:
 ```
-Workflow: claude-leads (auto-selected, default)
+Workflow: codex-leads (auto-selected, default)
 ```
 
 **After workflow is determined:**
@@ -134,8 +127,8 @@ Workflow: claude-leads (auto-selected, default)
 
 ## Codex-Leads Workflow (従来のワークフロー)
 
-> This is the existing workflow where **Codex plans and reviews, Claude implements**.
-> Active when `workflow` is explicitly set to `codex-leads`, or auto-selected for reasoning-specialized models (o3 系).
+> This is the default workflow where **Codex plans and reviews, Claude implements**.
+> Active when `workflow` is `auto` (default) or explicitly set to `codex-leads`.
 
 ### Step 2: Analyze Task
 
@@ -938,8 +931,8 @@ rm -f "$TMP_DIR/codex-review-output.md" "$TMP_DIR/codex-review-prompt.txt"
 
 ## Claude-Leads Workflow (新規ワークフロー)
 
-> This is the default workflow where **Claude plans and reviews, Codex implements**.
-> Active when `workflow` is `claude-leads`, `auto` (default), or auto-selected for most models.
+> This workflow has **Claude plan and review, Codex implement**.
+> Active only when `workflow` is explicitly set to `claude-leads`.
 >
 > **Key difference**: Codex runs with `workspace-write` sandbox to make file changes directly.
 
@@ -1436,7 +1429,7 @@ If timeout (`codex.wait_timeout`, default 180s) without completion marker:
 - **Workflow modes**:
   - **codex-leads**: Traditional workflow. Codex plans/reviews, Claude implements. Uses `read-only` sandbox by default.
   - **claude-leads**: New workflow. Claude plans/reviews, Codex implements. Uses `workspace-write` sandbox by default.
-  - **auto**: Auto-selects based on Codex model. Default is `claude-leads`. Only reasoning-specialized models (o3 系) trigger `codex-leads`.
+  - **auto**: 常に `codex-leads` を選択。`claude-leads` は明示的に `workflow: claude-leads` を指定した場合のみ有効。
 - **Launch modes**:
   - **tmux** (default when in tmux): Launches Codex in **interactive mode** (`codex` not `codex exec`). The pane persists after each task and can be reused for subsequent prompts. Uses `codex_get_or_create_pane` to find existing pane or create new one.
   - **wt**: Windows Terminal new pane. May steal focus (GitHub issue #17460). Uses `codex exec` (pane closes after completion). Uses file polling for completion detection.

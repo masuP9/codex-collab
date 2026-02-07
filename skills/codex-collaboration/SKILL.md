@@ -19,7 +19,7 @@ This skill enables effective collaboration between two AI systems with **two wor
 - **Claude Code**: Deep analysis, planning, code review
 - **Codex**: Fast implementation with workspace-write sandbox
 
-The workflow is auto-selected based on the Codex model, or can be explicitly configured via the `workflow` setting.
+デフォルト（`auto`）は常に **Codex-Leads** を選択。`claude-leads` は `workflow: claude-leads` を明示指定した場合のみ有効。
 
 **Key Feature**: tmux環境では、Codexはインタラクティブモードで起動し、ペインは永続化されます。一度起動したペインは再利用され、会話コンテキストが維持されます。WSL/その他の環境では`codex exec`で実行されます。
 
@@ -211,7 +211,7 @@ sandbox: read-only
 Parse YAML frontmatter for:
 - `model`: Codex model to use
 - `sandbox`: read-only | workspace-write | danger-full-access
-- `workflow`: Workflow mode (auto | codex-leads | claude-leads, default: auto)
+- `workflow`: Workflow mode (auto | codex-leads | claude-leads, default: auto; auto は常に codex-leads を選択)
 - `exchange.enabled`: Enable planning exchange (default: true, codex-leads only)
 - `exchange.max_iterations`: Maximum rounds for multi-turn exchange (default: 3)
 - `exchange.user_confirm`: When to ask user confirmation (never | always | on_important)
@@ -236,7 +236,7 @@ Apply settings in this order (later overrides earlier):
 ### Safe Defaults
 
 Always start with secure defaults:
-- `workflow: auto` - Auto-select workflow based on model
+- `workflow: auto` - 常に codex-leads を選択（claude-leads は明示指定時のみ）
 - `sandbox: read-only` - Codex cannot modify files (codex-leads)
 - `exchange.enabled: true` - Planning exchange enabled by default
 - `exchange.max_iterations: 3` - Prevent runaway exchanges
