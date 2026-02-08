@@ -77,7 +77,7 @@ export CODEX_SKILL_CONTEXT=1
 
 # Default mode based on environment
 DEFAULT_MODE="claude-only"
-if [ -n "$TMUX" ] && command -v codex &>/dev/null; then
+if command -v codex &>/dev/null; then
   DEFAULT_MODE="codex"
 fi
 
@@ -88,9 +88,9 @@ if [ -n "$MODE_OVERRIDE" ]; then
 else
   MODE="$DEFAULT_MODE"
   if [ "$MODE" = "codex" ]; then
-    echo "Mode: codex (auto-detected: tmux + Codex available)"
+    echo "Mode: codex (auto-detected: Codex CLI available)"
   else
-    echo "Mode: claude-only (auto-detected: tmux or Codex not available)"
+    echo "Mode: claude-only (auto-detected: Codex CLI not available)"
   fi
 fi
 ```
@@ -295,93 +295,32 @@ echo "Hypothesis prompt prepared: $HYPOTHESIS_PROMPT"
 echo "Problem: $PROBLEM_DESC"
 ```
 
-2. Get or create Codex pane and send prompt:
+2. Run codex exec to generate hypotheses:
 
 ```bash
 export CODEX_SKILL_CONTEXT=1
 
-HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+# Source helpers
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+[ -z "$HELPERS" ] || [ ! -f "$HELPERS" ] && HELPERS="$(pwd)/scripts/codex-helpers.sh"
 [ -f "$HELPERS" ] && source "$HELPERS"
 
 TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
-SI_DIR="$TMP_DIR/strong-inference"
-mkdir -p "$SI_DIR"
-PANE_ID_FILE="$TMP_DIR/codex-pane-id"
-SANDBOX="read-only"
 HYPOTHESIS_PROMPT="$TMP_DIR/strong-inference-hypothesis-prompt.txt"
-
-# Get or create Codex pane
-CODEX_PANE=""
-if [ -n "$TMUX" ]; then
-  CODEX_PANE=$(codex_get_or_create_pane "$SANDBOX" "$PANE_ID_FILE")
-fi
-
-# Graceful fallback to claude-only mode (not exit)
-if [ -z "$CODEX_PANE" ]; then
-  echo "WARNING: No Codex pane available. Switching to claude-only mode."
-  echo "MODE_SWITCHED=claude-only"
-  exit 0
-fi
-
-echo "Using Codex pane: $CODEX_PANE"
-
-# Capture state before sending
-BEFORE_CONTENT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
-BEFORE_HASH=$(echo "$BEFORE_CONTENT" | codex_hash_content)
-
-# Send prompt using chunked method
-WAIT_TIMEOUT="${CODEX_WAIT_TIMEOUT:-180}"
-END_MARKER=$(codex_send_prompt_chunked "$CODEX_PANE" "$(cat "$HYPOTHESIS_PROMPT")")
-echo "Prompt sent to Codex pane: $CODEX_PANE"
-echo "Completion marker: $END_MARKER"
-
-# Save state for next step
-SI_STATE_FILE="$TMP_DIR/strong-inference-state-${TASK_ID}.env"
-cat > "$SI_STATE_FILE" << EOF
-TASK_ID='$TASK_ID'
-STATE_FILE='$STATE_FILE'
-CODEX_PANE='$CODEX_PANE'
-END_MARKER='$END_MARKER'
-BEFORE_HASH='$BEFORE_HASH'
-EOF
-echo "State saved to: $SI_STATE_FILE"
-```
-
-3. Wait for Codex response:
-
-```bash
-export CODEX_SKILL_CONTEXT=1
-
-HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
-[ -f "$HELPERS" ] && source "$HELPERS"
-
-TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
-SI_DIR="$TMP_DIR/strong-inference"
-
-# Load state from previous step
-if [ -n "$TASK_ID" ]; then
-  SI_STATE_FILE="$TMP_DIR/strong-inference-state-${TASK_ID}.env"
-else
-  SI_STATE_FILE=$(ls -t "$TMP_DIR"/strong-inference-state-*.env 2>/dev/null | head -1)
-fi
-
-if [ -z "$SI_STATE_FILE" ] || [ ! -f "$SI_STATE_FILE" ]; then
-  echo "ERROR: State file not found. Run step 2 first."
-  exit 1
-fi
-
-source "$SI_STATE_FILE"
-echo "Loaded state for task: $TASK_ID"
-
-# Wait for completion
 HYPOTHESIS_OUTPUT="$TMP_DIR/strong-inference-hypothesis-output.md"
-CODEX_WAIT_TIMEOUT=180
-codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
 
-# Capture output
-codex_capture_output "$CODEX_PANE" "$HYPOTHESIS_OUTPUT"
-echo "Output captured to: $HYPOTHESIS_OUTPUT"
+# Run codex exec (blocking - output goes to file)
+SANDBOX="read-only"
+codex_run_exec "$HYPOTHESIS_PROMPT" "$HYPOTHESIS_OUTPUT" "$SANDBOX"
+echo "Hypothesis output saved to: $HYPOTHESIS_OUTPUT"
 ```
+
+> **Note:** `codex exec` はブロッキング実行のため、完了待機は不要です。Bash tool の `timeout` を `min(wait_timeout + 60, 600) * 1000` ms に設定してください。Codex が利用できない場合は claude-only モードにフォールバックします。
 
 4. Parse hypotheses from response and update state file:
 
@@ -627,7 +566,30 @@ EOF
 echo "Review prompt prepared: $REVIEW_PROMPT"
 ```
 
-Then send to Codex using the same pattern as Step 3 (get pane, send prompt, wait, capture output).
+Then run codex exec using the same pattern as Step 3:
+
+```bash
+export CODEX_SKILL_CONTEXT=1
+
+# Source helpers
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+[ -z "$HELPERS" ] || [ ! -f "$HELPERS" ] && HELPERS="$(pwd)/scripts/codex-helpers.sh"
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+REVIEW_PROMPT="$TMP_DIR/strong-inference-review-prompt.txt"
+REVIEW_OUTPUT="$TMP_DIR/strong-inference-review-output.md"
+
+# Run codex exec (blocking)
+SANDBOX="read-only"
+codex_run_exec "$REVIEW_PROMPT" "$REVIEW_OUTPUT" "$SANDBOX"
+echo "Review output saved to: $REVIEW_OUTPUT"
+```
 
 **Report to user:**
 
@@ -668,7 +630,7 @@ find "$(pwd)/tmp/strong-inference" -name "*.md" -mtime +7 -delete 2>/dev/null ||
 ## Error Handling
 
 **If Codex unavailable in codex mode:**
-- Fall back to claude-only mode
+- Fall back to claude-only mode (auto-detected when `command -v codex` fails)
 - Inform user: "Codex not available, proceeding with Claude-only mode"
 
 **If verification times out:**

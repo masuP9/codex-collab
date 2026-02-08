@@ -1,6 +1,6 @@
 {
   "name": "codex-collab",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Claude Code と OpenAI Codex CLI の協調タスク実行プラグイン",
   "author": {
     "name": "masuP9"
@@ -11,8 +11,9 @@
         "matcher": "Bash",
         "hooks": [
           {
-            "type": "prompt",
-            "prompt": "You are about to execute a Bash command. Check if this command involves codex-collab helper functions.\n\n## Skill Context Detection\n\nFirst check if we are in skill context by looking for `export CODEX_SKILL_CONTEXT=1` in the command.\n\n**If skill context detected**: Allow all Bash commands to proceed without blocking.\n\n## Detection Patterns (only when NOT in skill context)\n\nCheck if the command contains:\n1. Helper function calls: `codex_find_pane`, `codex_send_prompt`, `codex_wait_completion`, etc.\n2. Sourcing helpers: `source.*codex-helpers.sh`\n3. Codex-collab variables: `CODEX_PANE`, `CODEX_PROMPT`, `ATTACHED_PANE`\n\n## Response\n\n**If patterns detected AND not in skill context**: Block and suggest using `/collab-codex [task]` instead.\n\n**If no patterns OR in skill context**: Allow silently.\n\nCommand to evaluate: $ARGUMENTS"
+            "type": "command",
+            "command": "bash -c 'for d in \"${CLAUDE_PLUGIN_ROOT:-}\" \"$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/ 2>/dev/null | head -1)\"; do [ -f \"$d/hooks/enforce-skill-usage.sh\" ] && exec bash \"$d/hooks/enforce-skill-usage.sh\"; done; exit 0'",
+            "timeout": 5
           }
         ]
       }

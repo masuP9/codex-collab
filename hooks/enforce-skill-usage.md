@@ -1,14 +1,15 @@
 ---
 name: enforce-skill-usage
 description: Enforce using skills instead of direct Bash execution for codex-collab operations
-event: PreToolUse
-match_tool: Bash
-type: prompt
 ---
 
 # Codex-Collab Skill Usage Enforcement
 
-You are about to execute a Bash command. Before proceeding, check if this command involves codex-collab helper functions.
+> **Implementation**: This hook is implemented as a command-type hook (`hooks/enforce-skill-usage.sh`).
+> The shell script works in both foreground and background agents (no LLM required).
+> See `plugin.json` for the hook registration.
+
+This document describes the detection logic used by `enforce-skill-usage.sh` to block direct Bash execution of codex-collab operations.
 
 ## Skill Context Detection
 
@@ -32,7 +33,7 @@ The **primary and most reliable** method is checking for the `CODEX_SKILL_CONTEX
 Check if the command contains any of these patterns using word-boundary matching:
 
 1. **Helper function calls**: `\bcodex_[A-Za-z0-9_]+\b`
-   - Matches: `codex_find_pane`, `codex_send_prompt`, `codex_wait_completion`, etc.
+   - Matches: `codex_run_exec`, `codex_build_exec_command`, `codex_write_prompt`, etc.
    - Does NOT match: variable names like `my_codex_var` or strings in comments
 
 2. **Sourcing helpers (direct filename)**: `\bsource\b.*codex-helpers\.sh` or `\.\s+.*codex-helpers\.sh`
@@ -43,11 +44,8 @@ Check if the command contains any of these patterns using word-boundary matching
 3. **Helper variable reference**: `\$HELPERS.*codex-helpers` or `HELPERS=.*codex-helpers`
    - Catches variable definitions and usages pointing to codex-helpers.sh
 
-4. **Codex-collab variables**: `\bCODEX_PANE\b`, `\bCODEX_PROMPT\b`, `\bATTACHED_PANE\b`
+4. **Codex-collab variables**: `\bCODEX_PROMPT\b`
    - Only when used as variable names
-
-5. **Tmux Codex operations**: `tmux.*-t.*\$CODEX_PANE` or `tmux.*codex-pane`
-   - Targeting Codex-specific panes
 
 ## If Patterns Detected (and NOT in skill context)
 
@@ -64,28 +62,16 @@ Allow the Bash command to proceed normally without any output.
 
 ## Response Format
 
-**If blocking** (patterns detected AND not in skill context):
+**If blocking** (exit 2, patterns detected AND not in skill context):
 ```
-This Bash command appears to use codex-collab helper functions directly.
-
-## Why This Is Blocked
-
-Executing codex-collab commands outside a skill context triggers Claude Code's normal
-safety checks, which require user approval for each command. Skills provide pre-authorized
-permissions that avoid this friction.
-
-## How to Proceed
+This Bash command uses codex-collab helper functions directly.
 
 Use the appropriate skill instead:
+- /collab-codex [task] - Start collaboration
+- /strong-inference [problem] - Investigate problems
+- /devils-advocate [proposal] - Stress-test designs
 
-- `/collab-codex [task]` - Start a new collaboration workflow
-- `/strong-inference [problem]` - Investigate a problem with competing hypotheses
-- `/devils-advocate [proposal]` - Stress-test a design or proposal
-
-## More Information
-
-For full documentation on Bash usage rules, skill context detection, and troubleshooting:
-See `docs/bash-usage.md` in the codex-collab plugin directory.
+See docs/bash-usage.md for details.
 ```
 
-**If allowing**: Do not output anything, just allow the command to proceed.
+**If allowing** (exit 0): No output, command proceeds normally.

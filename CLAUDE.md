@@ -37,40 +37,21 @@ PRを作成する前に、変更内容に応じて以下の **両方のファイ
 
 OpenAI Codex CLI と連携する際に知っておくべき仕様:
 
-### TUI 出力形式
+### codex exec（ステートレス実行）
 
-Codex CLI は **改行文字（`\n`）を含まない TUI 形式**で出力する。
-
-- 画面更新は ANSI カーソル制御シーケンス（例: `\033[32;3H`）を使用
-- `while read -r line` のような行単位読み取りは永遠にブロックされる
-- ストリーム処理には `grep -qF` など、改行に依存しない方法を使用すること
+Codex CLI との通信には `codex exec` を使用する。プロンプトを stdin から受け取り、結果を stdout に出力してブロッキング終了する。
 
 ```sh
-# NG: 改行がないため永遠に待機
-while IFS= read -r line; do
-  echo "$line" | grep -qF "$MARKER" && break
-done
+# 基本パターン
+cat prompt.txt | codex exec -s read-only -
 
-# OK: ストリーム全体を検索
-if grep -qF "$MARKER"; then
-  # マーカー検出
-fi
+# モデル指定
+cat prompt.txt | codex exec -s read-only -m o4-mini -
 ```
 
-### マーカー形式
-
-完了検出には `<<RESPONSE_END_xxx>>` 形式のユニークマーカーを使用:
-
-```
-<<RESPONSE_END_1770044801-429>>
-```
-
-### 完了検出方式
-
-Codex の応答完了はポーリング方式で検出する:
-- マーカー検出: `<<RESPONSE_END_xxx>>` の出現を監視
-- アイドル検出: 出力のハッシュが一定時間変化しないことで完了を推定
-- `codex_wait_completion()` がこれらを統合的に処理
+- 各呼び出しはステートレス（会話コンテキストは保持されない）
+- 出力に ANSI エスケープコードが含まれる場合があるため `codex_strip_ansi()` で除去
+- `codex_run_exec()` がファイル入出力、ANSI 除去、exit code ハンドリングを統合処理
 
 ## プロジェクト構造
 
@@ -102,7 +83,7 @@ Bash 使用ルールの詳細（スキルコンテキスト検出の仕組み、
 
 **→ [docs/bash-usage.md](docs/bash-usage.md)**
 
-> **Note**: `hooks/enforce-skill-usage.md` の PreToolUse フックがこのルールを強制します。
+> **Note**: `hooks/enforce-skill-usage.sh` の PreToolUse フック（command型）がこのルールを強制します。
 > 新しいコマンドを作成する場合は、`export CODEX_SKILL_CONTEXT=1` を Bash ブロックの先頭に追加してください。
 
 ## ヘルパースクリプトの管理
@@ -114,6 +95,9 @@ Bash 使用ルールの詳細（スキルコンテキスト検出の仕組み、
 各コマンドのbashブロックで以下のようにsourceします:
 
 ```bash
+# Mark skill context for PreToolUse hook detection
+export CODEX_SKILL_CONTEXT=1
+
 # Robust helper loading with fallback chain
 HELPERS=""
 if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
@@ -136,21 +120,24 @@ fi
 
 ### 現在の関数一覧
 
-コア関数（すべてのコマンドで必須）:
+コア関数（Codex 実行）:
 
-- `codex_ensure_tmp_dir()` - 一時ディレクトリの確保（絶対パスを返す）
-- `codex_find_pane()` - Codexペイン検出（保存ID + 自動検出）
-- `codex_verify_pane()` - ペインのヘルスチェック（存在・セッション・プロセス確認）
-- `codex_get_or_create_pane()` - ペインの取得または作成（統合エントリポイント）
-- `codex_send_prompt_file()` - ファイル参照によるプロンプト送信
-- `codex_send_prompt_chunked()` - 分割送信によるプロンプト送信（長いプロンプト向け）
-- `codex_wait_completion()` - 完了待機（ポーリング方式）
-- `codex_capture_output()` - 出力キャプチャ
+- `codex_run_exec()` - codex exec のラッパー（stdin パイプ、ANSI 除去、出力保存、exit code ハンドリング）
+- `codex_build_exec_command()` - codex exec コマンド文字列の構築
+- `codex_write_prompt()` - プロンプトを一時ファイルに書き出し
+- `codex_strip_ansi()` - ANSI エスケープコード除去
 
 ユーティリティ関数:
 
+- `codex_ensure_tmp_dir()` - 一時ディレクトリの確保（絶対パスを返す）
+- `codex_tmp_path()` - 一時ディレクトリ内のファイルパス取得
 - `codex_hash_content()` - クロスプラットフォームハッシュ計算
-- `codex_check_tmux()` - tmuxセッション確認
+- `codex_generate_signal()` - ユニークID生成
 - `codex_get_language_directive()` - 言語指示生成（多言語対応）
+- `codex_debug()` - デバッグログ出力
+
+メタデータ抽出:
+
 - `codex_extract_metadata()` - レスポンスからメタデータ抽出
+- `codex_get_field()` - メタデータフィールド取得
 - `codex_get_status()` / `codex_get_verdict()` - メタデータフィールド取得

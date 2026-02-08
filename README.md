@@ -4,7 +4,7 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 
 ## 概要
 
-このプラグインは、Claude Code と Codex の強みを組み合わせた協調ワークフローを提供します。モデルの特性に応じて最適なワークフローを自動選択します。
+このプラグインは、Claude Code と Codex の強みを組み合わせた協調ワークフローを提供します。`codex exec` によるステートレス実行で Codex と通信し、シンプルなアーキテクチャを実現しています。
 
 **Codex-Leads（従来のレビュー型）:**
 - **Codex**: 計画作成・コードレビュー
@@ -27,37 +27,21 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 ## 前提条件
 
 - OpenAI Codex CLI (`codex`) がインストールされていること
+- `codex exec` が動作すること（`echo "test" | codex exec -s read-only -`）
 - 環境変数 `OPENAI_API_KEY` が設定されていること
-- WSL環境: Windows Terminal (`wt.exe`) が利用可能であること（リアルタイム出力確認用）
-- オプション: tmuxセッション内で作業している場合、フォーカスを奪わずにCodexを実行可能
-- オプション: `jq` (セッション状態管理に使用。未インストールの場合は毎回新規セッションとして扱う)
 
-## セットアップ
+## アーキテクチャ
 
-### tmux セッションの起動（推奨）
+Codex CLI との通信は `codex exec`（ステートレス実行）を使用します:
 
-tmux モードを使用する場合、**絶対パス**でソケットを指定して起動することを推奨します：
-
-```bash
-# プロジェクトディレクトリで実行
-tmux -S "$(pwd)/collab.sock" new -s collab
+```
+Claude Code → Bash tool → codex exec → stdout 取得 → パース
 ```
 
-**なぜ絶対パスが推奨されるか:**
-- `tmux -S ./collab.sock` のような相対パスで起動すると、サブディレクトリからの実行時に問題が発生する可能性があります
-- 絶対パスなら、どのディレクトリから実行しても確実にソケットを見つけられます
-
-> **Note:** v0.20.1 以降では、相対パスで起動した場合も親ディレクトリを遡って自動検索しますが、絶対パスでの起動が最も確実です。
-
-### 環境変数での指定
-
-tmux ソケットを明示的に指定したい場合は、環境変数 `CODEX_TMUX_SOCKET` を設定できます：
-
-```bash
-export CODEX_TMUX_SOCKET="/path/to/your/project/collab.sock"
-```
-
-この環境変数が設定されている場合、`$TMUX` からの自動検出より優先されます。
+- プロンプトを stdin から渡し、結果を stdout で受け取るシンプルな構造
+- 各呼び出しは独立（会話コンテキストはプロンプト内に明示的に含める）
+- `codex_run_exec()` が入出力、ANSI エスケープ除去、exit code ハンドリングを統合処理
+- バックグラウンド実行が必要な場合は Bash tool の `run_in_background: true` を使用
 
 ## プロジェクト構造
 
@@ -84,26 +68,23 @@ codex-collab/
 
 `scripts/codex-helpers.sh` には、コマンド間で共有される関数が定義されています:
 
-**コア関数:**
-- `codex_find_pane()` - Codexペイン検出（保存ID + 自動検出）
-- `codex_verify_pane()` - ペインのヘルスチェック（存在・セッション・プロセス確認）
-- `codex_get_or_create_pane()` - 既存ペインの検出または新規作成
-- `codex_send_prompt_file()` - ファイル参照によるプロンプト送信（長いプロンプト向け）
-- `codex_send_prompt_chunked()` - 分割送信によるプロンプト送信（長いプロンプトの安定送信向け）
-- `codex_wait_completion()` - マーカー + アイドル検出による完了待機
-- `codex_capture_output()` - ペイン出力のキャプチャ
-- `codex_check_tmux()` - tmuxセッション確認
-- `codex_ensure_tmp_dir()` - 一時ディレクトリ管理
-- `codex_get_language_directive()` - 言語指示生成
+**コア関数（Codex 実行）:**
+- `codex_run_exec()` - codex exec のラッパー（stdin パイプ、ANSI 除去、出力保存、exit code ハンドリング）
+- `codex_build_exec_command()` - codex exec コマンド文字列の構築
+- `codex_write_prompt()` - プロンプトを一時ファイルに書き出し
+- `codex_strip_ansi()` - ANSI エスケープコード除去
 
 **ユーティリティ関数:**
+- `codex_ensure_tmp_dir()` - 一時ディレクトリ管理
+- `codex_tmp_path()` - 一時ディレクトリ内のファイルパス取得
 - `codex_hash_content()` - クロスプラットフォームハッシュ計算
-- `codex_acquire_lock()` - 排他ロック取得（同時送信の競合防止）
-- `codex_release_lock()` - ロック解放
-- `codex_generate_signal()` - ユニークシグナル生成
+- `codex_generate_signal()` - ユニークID生成
+- `codex_get_language_directive()` - 言語指示生成
+- `codex_debug()` - デバッグログ出力
 
 **メタデータ抽出:**
 - `codex_extract_metadata()` - 応答末尾のYAMLブロックを抽出
+- `codex_get_field()` - メタデータフィールド取得
 - `codex_get_status()` - status フィールド取得（continue/stop）
 - `codex_get_verdict()` - verdict フィールド取得（pass/conditional/fail）
 
@@ -119,11 +100,10 @@ codex-collab/
 /collab-codex 新しい認証機能を実装して
 ```
 
-**自動検出機能 (tmuxモード):**
-- tmuxセッション内で実行時、既存のCodexペインを自動検出・再利用
-- ペインがなければ新規起動し、`tmp/codex-pane-id`に保存
-- 複数のCodexペインがある場合は最初のペインを使用（警告を表示）
-- 会話コンテキストが維持されるため、継続的な協調作業が可能
+**Codex 呼び出し:**
+- `codex exec` によるステートレス実行（ブロッキング、stdout 出力）
+- 各呼び出しは独立（会話コンテキストはプロンプト内に明示的に含める）
+- Codex CLI が未インストールの場合は Claude-only モードにフォールバック
 
 ### `/strong-inference` コマンド
 
@@ -141,7 +121,7 @@ Strong Inference（強い推論）メソッドを使って、仮説駆動でバ�
 - 2-4個の競合仮説を生成
 - 各仮説を排除する「キラー実験」を設計
 - 仮説ツリーを `tmp/strong-inference/` に保存（調査状態を永続化）
-- tmuxモードではCodexが仮説生成、Claudeが検証実行
+- codexモードではCodexが仮説生成、Claudeが検証実行
 
 ### `/devils-advocate` コマンド
 
@@ -162,7 +142,7 @@ Devil's Advocate（悪魔の代弁者）メソッドを使って、設計案や�
 - Blue Team（提案側）vs Red Team（批判側）の構造化議論
 - 3ラウンド（デフォルト）の反論・再反論
 - 最終評価: APPROVE / CONDITIONAL / REJECT
-- tmuxモードではCodexがRed Team、ClaudeがBlue Team
+- codexモードではCodexがRed Team、ClaudeがBlue Team
 - 議論ログを `tmp/devils-advocate/` に保存
 
 ### スキルの自動起動
@@ -232,7 +212,6 @@ sandbox: read-only
 | `workflow` | `auto` | ワークフロー選択 (auto, codex-leads, claude-leads) |
 | `model` | (Codexデフォルト) | 使用するモデル (o3, o4-mini等) |
 | `sandbox` | `read-only` | サンドボックスモード (read-only, workspace-write, danger-full-access)。codex-leads用 |
-| `launch.mode` | `auto` | 起動モード (auto, tmux, wt, inline)。autoはtmuxセッション内ならtmux、そうでなければwt→inline |
 | `exchange.enabled` | `true` | Planning exchangeのグローバルキルスイッチ (codex-leads) |
 | `exchange.max_iterations` | `3` | Planning exchangeの最大ラウンド数 |
 | `exchange.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
@@ -244,19 +223,6 @@ sandbox: read-only
 | `claude_leads.consult_codex` | `true` | 計画の壁打ちフェーズ有効化 (claude-leads) |
 | `claude_leads.safety_checkpoint` | `stash` | 実装前チェックポイント (stash, wip-commit, none) |
 | `claude_leads.review.max_iterations` | `3` | Claudeレビュー修正ループの上限 (claude-leads) |
-
-### Launch Mode について
-
-Codexの起動方法を選択できます:
-
-| モード | 説明 | フォーカス奪取 | 完了検知 |
-|--------|------|---------------|---------|
-| `tmux` | 現在のペインを分割してCodexを実行（右側に表示） | なし | マーカー + アイドル検出 |
-| `wt` | Windows Terminalの新しいペインで実行 | あり | ファイルポーリング |
-| `inline` | 現在のターミナルで実行（ブロッキング） | - | ファイルポーリング |
-| `auto` | tmuxセッション内ならtmux、そうでなければwt→inline | 状況による | モードに依存 |
-
-> **Note:** tmuxモードは現在のペインを水平分割し、右側でCodexを実行します。完了検出にはマーカー検出とアイドル検出を組み合わせたポーリング方式を使用します。
 
 ### 設定の優先順位
 
@@ -298,11 +264,7 @@ Claude が計画・レビュー、Codex が実装するワークフロー。高�
 
 ### ワークフロー自動選択
 
-`workflow: auto`（デフォルト）では、Codex のモデル設定に基づいて自動選択:
-- デフォルト → **claude-leads**（Claude が計画・レビュー、Codex が実装）
-- 推論特化モデル（o3 系）→ **codex-leads**（Codex が計画・レビュー、Claude が実装）
-
-> Claude (Opus 4.6) は深い推論・分析・計画に優れ、最新の Codex モデル（gpt-5 系含む）は正確で高速な実装に優れているため、デフォルトは claude-leads です。
+`workflow: auto`（デフォルト）では、常に **codex-leads** を選択します。`claude-leads` は `workflow: claude-leads` を明示的に指定した場合のみ有効です。
 
 ### Claude-Leads の責務境界
 

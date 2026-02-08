@@ -28,7 +28,7 @@ When you execute the same commands **outside** a skill context (directly in conv
 
 ## How Skill Context Detection Works
 
-The PreToolUse hook (`hooks/enforce-skill-usage.md`) detects skill context using the following methods:
+The PreToolUse hook (`hooks/enforce-skill-usage.sh`) detects skill context using the following methods. This hook uses `type: command` (shell script) so it works in both foreground and background agents.
 
 ### Primary Method (Reliable)
 
@@ -53,9 +53,9 @@ fi
 
 When this marker is present, all Bash commands are allowed without blocking.
 
-### Heuristic Method (Less Reliable)
+### Note on jq Dependency
 
-The hook may also check if you're currently processing a `/collab-codex` or `/strong-inference` command based on conversation context. However, this is not always reliably accessible depending on platform implementation.
+The hook script requires `jq` to parse the JSON input from Claude Code. If `jq` is not available, the hook fails open (allows all commands). This is acceptable since the hook is a quality-of-life feature, not a security control.
 
 ## Detection Patterns
 
@@ -63,10 +63,10 @@ When **not** in skill context, the hook checks for these patterns to identify co
 
 | Pattern | Description | Example | Limitation |
 |---------|-------------|---------|------------|
-| `\bcodex_[A-Za-z0-9_]+\b` | Helper function calls | `codex_find_pane` | - |
-| `\bsource\b.*codex-helpers\.sh` | Direct path sourcing | `source ./scripts/codex-helpers.sh` | Indirect refs not detected |
-| `HELPERS=.*codex-helpers` | Variable definition | `HELPERS="./codex-helpers.sh"` | - |
-| `\bCODEX_PANE\b`, `\bATTACHED_PANE\b` | codex-collab variables | `$CODEX_PANE` | - |
+| `\bcodex_[A-Za-z0-9_]+\b` | Helper function calls | `codex_run_exec` | - |
+| `\bsource\b.*codex-helpers\.sh` or `\.\s+.*codex-helpers\.sh` | Direct path sourcing (source/dot) | `source ./scripts/codex-helpers.sh` | Indirect refs not detected |
+| `\$HELPERS.*codex-helpers` or `HELPERS=.*codex-helpers` | Variable reference/definition | `HELPERS="./codex-helpers.sh"` | - |
+| `\bCODEX_PROMPT\b` | codex-collab variables | `$CODEX_PROMPT` | - |
 
 ### Known Limitations
 
@@ -78,16 +78,14 @@ When **not** in skill context, the hook checks for these patterns to identify co
 If you try to execute codex-collab operations outside a skill context, you'll see a message like:
 
 ```
-This Bash command appears to use codex-collab helper functions directly.
+This Bash command uses codex-collab helper functions directly.
 
-To ensure consistent behavior and avoid unnecessary approval prompts, please use the appropriate skill instead:
+Use the appropriate skill instead:
+- /collab-codex [task] - Start collaboration
+- /strong-inference [problem] - Investigate problems
+- /devils-advocate [proposal] - Stress-test designs
 
-- `/collab-codex [task]` - Start a new collaboration workflow
-- `/collab-codex [task]` - Start a new collaboration workflow (reuses existing Codex pane if available)
-
-Reason: Skill execution provides proper tool permissions and avoids repeated approval requests.
-
-For more details, see: docs/bash-usage.md
+See docs/bash-usage.md for details.
 ```
 
 ## Troubleshooting
@@ -126,6 +124,6 @@ This ensures the hook recognizes the command as running in skill context.
 
 ### Modifying Detection Patterns
 
-Detection patterns are defined in `hooks/enforce-skill-usage.md`. Modify with caution to avoid:
+Detection patterns are defined in `hooks/enforce-skill-usage.sh`. Modify with caution to avoid:
 - False positives (blocking unrelated commands)
 - False negatives (missing codex-collab commands)

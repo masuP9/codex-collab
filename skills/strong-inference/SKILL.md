@@ -16,13 +16,13 @@ Strong Inference is a scientific method that accelerates problem-solving by:
 
 This skill helps developers investigate bugs, performance issues, and unexpected behaviors using a structured, hypothesis-driven approach.
 
-**Key Feature**: In tmux mode, this skill can optionally leverage Codex for hypothesis generation and review while Claude handles verification execution.
+**Key Feature**: In codex mode, this skill can optionally leverage Codex for hypothesis generation and review while Claude handles verification execution.
 
 ## Prerequisites
 
 - The user has a problem, bug, or unexpected behavior to investigate
 - Relevant code context is available
-- For Codex collaboration mode: tmux session with Codex CLI available
+- For Codex collaboration mode: Codex CLI available (`codex exec`)
 
 ## Workflow Phases
 
@@ -108,7 +108,7 @@ When one hypothesis has strong supporting evidence:
 | `codex` | Codex | Claude | Claude | Codex |
 | `claude-only` | Claude | Claude | Claude | Claude |
 
-- **Default mode**: `codex` (when in tmux with Codex available)
+- **Default mode**: `codex` (when Codex CLI available)
 - **Fallback**: `claude-only` (automatic when Codex unavailable)
 
 ## Hypothesis Tree File

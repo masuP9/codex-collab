@@ -3,7 +3,6 @@
 #
 # Usage:
 #   ./scripts/test-helpers.sh           # Run all tests
-#   ./scripts/test-helpers.sh --tmux    # Include tmux-dependent tests (requires tmux session)
 
 set -e -u -o pipefail
 
@@ -145,369 +144,6 @@ test_generate_signal() {
 }
 
 # ==============================================================================
-# Test: codex_check_tmux
-# ==============================================================================
-test_check_tmux() {
-  echo ""
-  echo "=== Testing: codex_check_tmux ==="
-
-  if [ -n "${TMUX:-}" ]; then
-    if codex_check_tmux 2>/dev/null; then
-      pass "check_tmux returns success in tmux"
-    else
-      fail "check_tmux" "Should return success inside tmux"
-    fi
-  else
-    if codex_check_tmux 2>/dev/null; then
-      fail "check_tmux" "Should return failure outside tmux"
-    else
-      pass "check_tmux returns failure outside tmux"
-    fi
-  fi
-}
-
-# ==============================================================================
-# Test: codex_sanitize_pane_id
-# ==============================================================================
-test_sanitize_pane_id() {
-  echo ""
-  echo "=== Testing: codex_sanitize_pane_id ==="
-
-  # Test normal pane ID
-  local result
-  result=$(codex_sanitize_pane_id "%1")
-  if [ "$result" = "%1" ]; then
-    pass "sanitize_pane_id: normal pane ID preserved"
-  else
-    fail "sanitize_pane_id normal" "Expected '%1', got '$result'"
-  fi
-
-  # Test pane ID with trailing newline
-  result=$(codex_sanitize_pane_id $'%1\n')
-  if [ "$result" = "%1" ]; then
-    pass "sanitize_pane_id: removes trailing newline"
-  else
-    fail "sanitize_pane_id newline" "Expected '%1', got '$result'"
-  fi
-
-  # Test pane ID with prefix garbage (reported bug pattern)
-  result=$(codex_sanitize_pane_id $'pane_cmd=claude\n%1')
-  if [ "$result" = "%1" ]; then
-    pass "sanitize_pane_id: extracts ID from garbage prefix"
-  else
-    fail "sanitize_pane_id garbage" "Expected '%1', got '$result'"
-  fi
-
-  # Test pane ID with spaces
-  result=$(codex_sanitize_pane_id "  %42  ")
-  if [ "$result" = "%42" ]; then
-    pass "sanitize_pane_id: extracts ID from whitespace"
-  else
-    fail "sanitize_pane_id whitespace" "Expected '%42', got '$result'"
-  fi
-
-  # Test empty input
-  result=$(codex_sanitize_pane_id "")
-  if [ -z "$result" ]; then
-    pass "sanitize_pane_id: empty input returns empty"
-  else
-    fail "sanitize_pane_id empty" "Expected empty, got '$result'"
-  fi
-
-  # Test invalid input (no pane ID pattern)
-  result=$(codex_sanitize_pane_id "invalid_input")
-  if [ -z "$result" ]; then
-    pass "sanitize_pane_id: invalid input returns empty"
-  else
-    fail "sanitize_pane_id invalid" "Expected empty, got '$result'"
-  fi
-
-  # Test multiple pane IDs (should return first)
-  result=$(codex_sanitize_pane_id "%1 %2 %3")
-  if [ "$result" = "%1" ]; then
-    pass "sanitize_pane_id: multiple IDs returns first"
-  else
-    fail "sanitize_pane_id multiple" "Expected '%1', got '$result'"
-  fi
-
-  # Test larger pane ID numbers
-  result=$(codex_sanitize_pane_id "%12345")
-  if [ "$result" = "%12345" ]; then
-    pass "sanitize_pane_id: large pane ID number preserved"
-  else
-    fail "sanitize_pane_id large" "Expected '%12345', got '$result'"
-  fi
-
-  # Edge case: multiline garbage with junk after pane ID
-  result=$(codex_sanitize_pane_id $'pane_cmd=claude\n%1\njunk_after')
-  if [ "$result" = "%1" ]; then
-    pass "sanitize_pane_id: multiline garbage with trailing junk"
-  else
-    fail "sanitize_pane_id multiline junk" "Expected '%1', got '$result'"
-  fi
-
-  # Edge case: carriage return (Windows-style line ending)
-  result=$(codex_sanitize_pane_id $'%3\r\n')
-  if [ "$result" = "%3" ]; then
-    pass "sanitize_pane_id: handles CR+LF"
-  else
-    fail "sanitize_pane_id CR" "Expected '%3', got '$result'"
-  fi
-
-  # Edge case: bare % without number
-  result=$(codex_sanitize_pane_id "%")
-  if [ -z "$result" ]; then
-    pass "sanitize_pane_id: bare % returns empty"
-  else
-    fail "sanitize_pane_id bare %" "Expected empty, got '$result'"
-  fi
-
-  # Edge case: %N followed by letters (e.g. %1a)
-  result=$(codex_sanitize_pane_id "%1a")
-  if [ "$result" = "%1" ]; then
-    pass "sanitize_pane_id: extracts %1 from %1a"
-  else
-    fail "sanitize_pane_id %1a" "Expected '%1', got '$result'"
-  fi
-
-  # Edge case: multiple IDs on separate lines
-  result=$(codex_sanitize_pane_id $'%1\n%2')
-  if [ "$result" = "%1" ]; then
-    pass "sanitize_pane_id: multiple IDs on lines returns first"
-  else
-    fail "sanitize_pane_id multiline IDs" "Expected '%1', got '$result'"
-  fi
-
-  # Edge case: labeled format (pane_id=%1)
-  result=$(codex_sanitize_pane_id "pane_id=%1")
-  if [ "$result" = "%1" ]; then
-    pass "sanitize_pane_id: extracts from labeled format"
-  else
-    fail "sanitize_pane_id labeled" "Expected '%1', got '$result'"
-  fi
-}
-
-# ==============================================================================
-# Test: codex_verify_pane (requires tmux)
-# ==============================================================================
-test_verify_pane() {
-  echo ""
-  echo "=== Testing: codex_verify_pane ==="
-
-  if [ -z "${TMUX:-}" ]; then
-    skip "verify_pane" "Not in tmux session"
-    return
-  fi
-
-  # Test with empty pane ID (use || true to prevent set -e exit)
-  local result
-  result=$(codex_verify_pane "" 2>/dev/null) || true
-  if [ "$result" = "error:empty_pane_id" ]; then
-    pass "verify_pane rejects empty pane ID"
-  else
-    fail "verify_pane empty" "Expected 'error:empty_pane_id', got '$result'"
-  fi
-
-  # Test with non-existent pane
-  result=$(codex_verify_pane "%99999" 2>/dev/null) || true
-  if [ "$result" = "error:pane_not_found" ]; then
-    pass "verify_pane handles non-existent pane"
-  else
-    fail "verify_pane non-existent" "Expected 'error:pane_not_found', got '$result'"
-  fi
-
-  # Test with current pane (likely not Codex)
-  local current_pane
-  current_pane=$(tmux display-message -p '#{pane_id}')
-  result=$(codex_verify_pane "$current_pane" 2>/dev/null) || true
-  # Current pane is running bash/zsh, not Codex
-  if [ "$result" = "error:not_codex_pane" ] || [ "$result" = "valid" ]; then
-    pass "verify_pane checks current pane"
-  else
-    fail "verify_pane current" "Unexpected result: '$result'"
-  fi
-}
-
-# ==============================================================================
-# Test: codex_find_pane (requires tmux)
-# ==============================================================================
-test_find_pane() {
-  echo ""
-  echo "=== Testing: codex_find_pane ==="
-
-  if [ -z "${TMUX:-}" ]; then
-    skip "find_pane" "Not in tmux session"
-    return
-  fi
-
-  # Create temp directory for test
-  local test_dir
-  test_dir=$(mktemp -d)
-  local test_pane_file="$test_dir/.codex-pane-id"
-
-  # Test with non-existent pane file (should search)
-  local result
-  result=$(codex_find_pane "$test_pane_file" 2>&1) || true
-  # Should either find a Codex pane or report not found
-  # Valid outputs: "No Codex pane found", "Auto-detected", "Found Codex", "Multiple Codex panes"
-  if echo "$result" | grep -qE "(No Codex pane found|Auto-detected|Found Codex|Multiple Codex panes|scanning)"; then
-    pass "find_pane handles missing pane file"
-  else
-    fail "find_pane missing file" "Unexpected output: '$result'"
-  fi
-
-  # Test with invalid stored pane ID
-  echo "%99999" > "$test_pane_file"
-  result=$(codex_find_pane "$test_pane_file" 2>&1) || true
-  if echo "$result" | grep -qE "(invalid|scanning|No Codex pane)"; then
-    pass "find_pane handles invalid stored ID"
-  else
-    fail "find_pane invalid ID" "Unexpected output: '$result'"
-  fi
-
-  # Cleanup
-  rm -rf "$test_dir"
-}
-
-# ==============================================================================
-# Test: codex_send_prompt (requires tmux, mock only)
-# ==============================================================================
-test_send_prompt() {
-  echo ""
-  echo "=== Testing: codex_send_prompt ==="
-
-  if [ -z "${TMUX:-}" ]; then
-    skip "send_prompt" "Not in tmux session"
-    return
-  fi
-
-  # Test with empty arguments
-  local result
-  result=$(codex_send_prompt "" "" 2>&1) || true
-  if echo "$result" | grep -qE "required|error|Error"; then
-    pass "send_prompt validates arguments"
-  else
-    fail "send_prompt validation" "Should reject empty arguments, got: '$result'"
-  fi
-
-  # Note: Full test requires a Codex pane, skipping interactive test
-  skip "send_prompt full" "Requires active Codex pane"
-}
-
-# ==============================================================================
-# Test: codex_send_prompt_file marker parsing
-# ==============================================================================
-test_send_prompt_file_marker_parsing() {
-  echo ""
-  echo "=== Testing: codex_send_prompt_file marker parsing ==="
-
-  # Test the marker detection pattern used in codex_send_prompt_file
-  # Pattern: [[ "$arg" == "<<"* ]] || [[ "$arg" == "RESPONSE_END_"* ]]
-
-  # Test helper: mimics the exact pattern used in codex_send_prompt_file
-  _is_end_marker() {
-    local arg="$1"
-    if [[ "$arg" == "<<"* ]] || [[ "$arg" == "RESPONSE_END_"* ]]; then
-      return 0
-    fi
-    return 1
-  }
-
-  # Test 1: <<RESPONSE_END_xxx>> format (original format)
-  if _is_end_marker "<<RESPONSE_END_123>>"; then
-    pass "marker parsing: <<RESPONSE_END_xxx>> recognized"
-  else
-    fail "marker parsing" "<<RESPONSE_END_xxx>> not recognized as marker"
-  fi
-
-  # Test 2: RESPONSE_END_xxx format (without << >>)
-  # This is the bug fix - should now be recognized
-  if _is_end_marker "RESPONSE_END_123-456"; then
-    pass "marker parsing: RESPONSE_END_xxx recognized"
-  else
-    fail "marker parsing" "RESPONSE_END_xxx not recognized as marker"
-  fi
-
-  # Test 3: Regular filename should NOT be detected as marker
-  if _is_end_marker "src/file.ts"; then
-    fail "marker parsing" "Regular filename incorrectly detected as marker"
-  else
-    pass "marker parsing: regular filename not detected as marker"
-  fi
-
-  # Test 4: NOT_RESPONSE_END_xxx should NOT be detected as marker
-  # (doesn't start with "RESPONSE_END_")
-  if _is_end_marker "NOT_RESPONSE_END_123"; then
-    fail "marker parsing" "NOT_RESPONSE_END_xxx incorrectly detected as marker"
-  else
-    pass "marker parsing: NOT_RESPONSE_END_xxx not detected as marker"
-  fi
-
-  # Test 5: Empty string should NOT be marker
-  if _is_end_marker ""; then
-    fail "marker parsing" "Empty string incorrectly detected as marker"
-  else
-    pass "marker parsing: empty string not detected as marker"
-  fi
-
-  # Test 6: <<any_other>> format (starts with <<)
-  if _is_end_marker "<<CUSTOM_MARKER>>"; then
-    pass "marker parsing: <<CUSTOM_MARKER>> recognized"
-  else
-    fail "marker parsing" "<<CUSTOM_MARKER>> not recognized as marker"
-  fi
-}
-
-# ==============================================================================
-# Test: codex_wait_completion (mock only)
-# ==============================================================================
-test_wait_completion() {
-  echo ""
-  echo "=== Testing: codex_wait_completion ==="
-
-  # This is difficult to test without a real Codex pane
-  # Just verify the function exists and accepts arguments
-  if type codex_wait_completion &>/dev/null; then
-    pass "wait_completion function exists"
-  else
-    fail "wait_completion" "Function not defined"
-  fi
-
-  skip "wait_completion full" "Requires active Codex pane"
-}
-
-# ==============================================================================
-# Test: codex_capture_output (requires tmux)
-# ==============================================================================
-test_capture_output() {
-  echo ""
-  echo "=== Testing: codex_capture_output ==="
-
-  if [ -z "${TMUX:-}" ]; then
-    skip "capture_output" "Not in tmux session"
-    return
-  fi
-
-  # Test capturing current pane
-  local test_file
-  test_file=$(mktemp)
-  local current_pane
-  current_pane=$(tmux display-message -p '#{pane_id}')
-
-  local result
-  result=$(codex_capture_output "$current_pane" "$test_file")
-
-  if [ -f "$test_file" ] && [ -s "$test_file" ]; then
-    pass "capture_output creates file with content"
-  else
-    fail "capture_output" "File not created or empty"
-  fi
-
-  # Cleanup
-  rm -f "$test_file"
-}
-
-# ==============================================================================
 # Test: Multiple sourcing guard
 # ==============================================================================
 test_multiple_source() {
@@ -558,7 +194,6 @@ test_tmp_directory() {
   fi
 
   # Test codex_ensure_tmp_dir returns absolute path
-  # Note: codex_ensure_tmp_dir was updated to return absolute paths for consistency
   if [ "$result" = "$expected_abs_path" ]; then
     pass "ensure_tmp_dir returns absolute path"
   else
@@ -577,46 +212,6 @@ test_tmp_directory() {
   # Cleanup
   rm -rf "$test_tmp"
   CODEX_TMP_DIR="$orig_tmp_dir"
-}
-
-# ==============================================================================
-# Test: codex_tmux_cmd
-# ==============================================================================
-test_tmux_cmd() {
-  echo ""
-  echo "=== Testing: codex_tmux_cmd ==="
-
-  # Save original values
-  local orig_socket="${CODEX_TMUX_SOCKET:-}"
-  local orig_tmux="${TMUX:-}"
-
-  # Test without socket (clear both CODEX_TMUX_SOCKET and TMUX to prevent socket resolution)
-  CODEX_TMUX_SOCKET=""
-  TMUX=""
-  local result
-  result=$(codex_tmux_cmd)
-  if [ "$result" = "tmux" ]; then
-    pass "tmux_cmd without socket"
-  else
-    fail "tmux_cmd without socket" "Expected 'tmux', got '$result'"
-  fi
-
-  # Test with explicit socket (CODEX_TMUX_SOCKET takes priority)
-  CODEX_TMUX_SOCKET="./test.sock"
-  result=$(codex_tmux_cmd)
-  if [ "$result" = "tmux -S ./test.sock" ]; then
-    pass "tmux_cmd with socket"
-  else
-    fail "tmux_cmd with socket" "Expected 'tmux -S ./test.sock', got '$result'"
-  fi
-
-  # Restore original values
-  CODEX_TMUX_SOCKET="$orig_socket"
-  if [ -n "$orig_tmux" ]; then
-    TMUX="$orig_tmux"
-  else
-    unset TMUX
-  fi
 }
 
 # ==============================================================================
@@ -789,286 +384,6 @@ test_get_language_directive() {
 }
 
 # ==============================================================================
-# Test: codex_acquire_lock / codex_release_lock
-# ==============================================================================
-test_lock_acquire_release() {
-  echo ""
-  echo "=== Testing: codex_acquire_lock / codex_release_lock ==="
-
-  # Use a unique test directory
-  local test_tmp
-  test_tmp=$(mktemp -d)
-  local original_tmp="${CODEX_TMP_DIR:-}"
-  export CODEX_TMP_DIR="$test_tmp"
-
-  # Test 1: First acquire should succeed
-  if codex_acquire_lock "test-lock-$$" >/dev/null 2>&1; then
-    pass "lock_acquire: first acquire succeeds"
-  else
-    fail "lock_acquire" "first acquire failed"
-  fi
-
-  # Test 2: Second acquire (same lock, same process) should succeed
-  # Note: flock allows same process to re-acquire
-  # So we test by checking lock file exists
-  if [ -f "$test_tmp/test-lock-$$.lock" ]; then
-    pass "lock_acquire: lock file created"
-  else
-    fail "lock_acquire" "lock file not created"
-  fi
-
-  # Test 3: Release should succeed
-  if codex_release_lock >/dev/null 2>&1; then
-    pass "lock_release: release succeeds"
-  else
-    fail "lock_release" "release failed"
-  fi
-
-  # Cleanup
-  rm -rf "$test_tmp"
-  if [ -n "$original_tmp" ]; then
-    export CODEX_TMP_DIR="$original_tmp"
-  else
-    unset CODEX_TMP_DIR
-  fi
-}
-
-# ==============================================================================
-# Test: codex_resolve_tmux_socket
-# ==============================================================================
-test_resolve_tmux_socket() {
-  echo ""
-  echo "=== Testing: codex_resolve_tmux_socket ==="
-
-  local original_tmux="${TMUX:-}"
-
-  # Test 1: Absolute path should be returned as-is
-  TMUX="/tmp/test-socket.sock,12345,0"
-  local result
-  result=$(codex_resolve_tmux_socket)
-  if [ "$result" = "/tmp/test-socket.sock" ]; then
-    pass "resolve_socket: absolute path returned as-is"
-  else
-    fail "resolve_socket absolute" "Expected '/tmp/test-socket.sock', got '$result'"
-  fi
-
-  # Test 2: Empty TMUX should return empty
-  TMUX=""
-  result=$(codex_resolve_tmux_socket)
-  if [ -z "$result" ]; then
-    pass "resolve_socket: empty TMUX returns empty"
-  else
-    fail "resolve_socket empty" "Expected empty, got '$result'"
-  fi
-
-  # Test 3: Relative path with non-existent socket should return error
-  TMUX="./nonexistent.sock,12345,0"
-  if ! codex_resolve_tmux_socket >/dev/null 2>&1; then
-    pass "resolve_socket: nonexistent relative returns error"
-  else
-    fail "resolve_socket nonexistent" "Should return error for nonexistent socket"
-  fi
-
-  # Test 4: Relative path with existing socket (if python3 available)
-  local test_base
-  test_base=$(mktemp -d)
-  mkdir -p "$test_base/child"
-
-  if command -v python3 >/dev/null 2>&1; then
-    # Create a real Unix socket using Python
-    python3 -c "
-import socket
-import sys
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-sock.bind('$test_base/test.sock')
-" 2>/dev/null
-
-    if [ -S "$test_base/test.sock" ]; then
-      # Run from child directory
-      (
-        cd "$test_base/child"
-        TMUX="./test.sock,12345,0"
-        result=$(codex_resolve_tmux_socket)
-        if [ "$result" = "$test_base/test.sock" ]; then
-          pass "resolve_socket: relative path resolved via parent search"
-        else
-          fail "resolve_socket relative" "Expected '$test_base/test.sock', got '$result'"
-        fi
-      )
-    else
-      skip "resolve_socket relative" "Could not create test socket"
-    fi
-    rm -f "$test_base/test.sock"
-  else
-    skip "resolve_socket relative" "python3 not available to create Unix socket"
-  fi
-
-  rm -rf "$test_base"
-
-  # Restore original TMUX
-  if [ -n "$original_tmux" ]; then
-    TMUX="$original_tmux"
-  else
-    unset TMUX
-  fi
-}
-
-# ==============================================================================
-# Test: codex_send_chunked splitting logic
-# ==============================================================================
-test_send_chunked_splitting() {
-  echo ""
-  echo "=== Testing: codex_send_chunked splitting logic ==="
-
-  # We can't easily test the actual sending without tmux,
-  # but we can test the awk-based splitting logic separately
-
-  # Test the awk splitting directly
-  local text="ABCDEFGHIJKLMNO"
-  local chunk_size=5
-  local chunks
-
-  # Use same awk logic as codex_send_chunked
-  chunks=$(printf '%s' "$text" | awk -v size="$chunk_size" '
-    BEGIN { ORS = "|" }
-    {
-      if (NR > 1) content = content "\n"
-      content = content $0
-    }
-    END {
-      len = length(content)
-      if (len == 0) exit
-      for (i = 1; i <= len; i += size) {
-        print substr(content, i, size)
-      }
-    }
-  ')
-
-  # Expected: "ABCDE|FGHIJ|KLMNO|"
-  if [ "$chunks" = "ABCDE|FGHIJ|KLMNO|" ]; then
-    pass "send_chunked: splits evenly divisible text correctly"
-  else
-    fail "send_chunked even split" "Expected 'ABCDE|FGHIJ|KLMNO|', got '$chunks'"
-  fi
-
-  # Test with remainder
-  text="ABCDEFGHIJKLMNOP"  # 16 chars
-  chunks=$(printf '%s' "$text" | awk -v size="$chunk_size" '
-    BEGIN { ORS = "|" }
-    {
-      if (NR > 1) content = content "\n"
-      content = content $0
-    }
-    END {
-      len = length(content)
-      if (len == 0) exit
-      for (i = 1; i <= len; i += size) {
-        print substr(content, i, size)
-      }
-    }
-  ')
-
-  # Expected: "ABCDE|FGHIJ|KLMNO|P|"
-  if [ "$chunks" = "ABCDE|FGHIJ|KLMNO|P|" ]; then
-    pass "send_chunked: splits text with remainder correctly"
-  else
-    fail "send_chunked remainder" "Expected 'ABCDE|FGHIJ|KLMNO|P|', got '$chunks'"
-  fi
-
-  # Test with text shorter than chunk size
-  text="ABC"
-  chunks=$(printf '%s' "$text" | awk -v size="$chunk_size" '
-    BEGIN { ORS = "|" }
-    {
-      if (NR > 1) content = content "\n"
-      content = content $0
-    }
-    END {
-      len = length(content)
-      if (len == 0) exit
-      for (i = 1; i <= len; i += size) {
-        print substr(content, i, size)
-      }
-    }
-  ')
-
-  # Expected: "ABC|"
-  if [ "$chunks" = "ABC|" ]; then
-    pass "send_chunked: handles text shorter than chunk size"
-  else
-    fail "send_chunked short" "Expected 'ABC|', got '$chunks'"
-  fi
-
-  # Test with multiline text
-  text=$'Line1\nLine2\nLine3'
-  chunks=$(printf '%s' "$text" | awk -v size=10 '
-    BEGIN { ORS = "|" }
-    {
-      if (NR > 1) content = content "\n"
-      content = content $0
-    }
-    END {
-      len = length(content)
-      if (len == 0) exit
-      for (i = 1; i <= len; i += size) {
-        print substr(content, i, size)
-      }
-    }
-  ')
-
-  # "Line1\nLine2\nLine3" is 17 chars
-  # Chunks of 10: "Line1\nLine" and "2\nLine3"
-  local expected=$'Line1\nLine|2\nLine3|'
-  if [ "$chunks" = "$expected" ]; then
-    pass "send_chunked: preserves newlines in multiline text"
-  else
-    fail "send_chunked multiline" "Newlines not preserved correctly"
-  fi
-}
-
-# ==============================================================================
-# Test: Stabilization configuration defaults
-# ==============================================================================
-test_stabilize_config() {
-  echo ""
-  echo "=== Testing: Stabilization configuration ==="
-
-  # Test that default values are set
-  # These should be set when helpers are sourced
-
-  # Check CODEX_STABILIZE_INTERVAL default
-  local default_interval="${CODEX_STABILIZE_INTERVAL:-}"
-  if [ "$default_interval" = "0.5" ]; then
-    pass "stabilize_config: CODEX_STABILIZE_INTERVAL default is 0.5"
-  else
-    fail "stabilize_config interval" "Expected '0.5', got '$default_interval'"
-  fi
-
-  # Check CODEX_STABILIZE_THRESHOLD default
-  local default_threshold="${CODEX_STABILIZE_THRESHOLD:-}"
-  if [ "$default_threshold" = "3" ]; then
-    pass "stabilize_config: CODEX_STABILIZE_THRESHOLD default is 3"
-  else
-    fail "stabilize_config threshold" "Expected '3', got '$default_threshold'"
-  fi
-
-  # Check CODEX_STABILIZE_MAX_WAIT default
-  local default_max_wait="${CODEX_STABILIZE_MAX_WAIT:-}"
-  if [ "$default_max_wait" = "6" ]; then
-    pass "stabilize_config: CODEX_STABILIZE_MAX_WAIT default is 6"
-  else
-    fail "stabilize_config max_wait" "Expected '6', got '$default_max_wait'"
-  fi
-
-  # Test that _codex_wait_for_stable_output function exists
-  if type _codex_wait_for_stable_output &>/dev/null; then
-    pass "stabilize_config: _codex_wait_for_stable_output function exists"
-  else
-    fail "stabilize_config function" "_codex_wait_for_stable_output function not found"
-  fi
-}
-
-# ==============================================================================
 # Test: codex_get_verdict
 # ==============================================================================
 test_get_verdict() {
@@ -1117,6 +432,154 @@ test_get_verdict() {
 }
 
 # ==============================================================================
+# Test: codex_strip_ansi
+# ==============================================================================
+test_strip_ansi() {
+  echo ""
+  echo "=== Testing: codex_strip_ansi ==="
+
+  # Test 1: Strip color codes
+  local input1=$'\033[31mred text\033[0m'
+  local result1
+  result1=$(codex_strip_ansi "$input1")
+  if [ "$result1" = "red text" ]; then
+    pass "strip_ansi: removes color codes"
+  else
+    fail "strip_ansi color" "Expected 'red text', got '$result1'"
+  fi
+
+  # Test 2: Strip cursor movement codes
+  local input2=$'\033[32;3Hsome text'
+  local result2
+  result2=$(codex_strip_ansi "$input2")
+  if [ "$result2" = "some text" ]; then
+    pass "strip_ansi: removes cursor movement"
+  else
+    fail "strip_ansi cursor" "Expected 'some text', got '$result2'"
+  fi
+
+  # Test 3: No ANSI codes (passthrough)
+  local input3="plain text"
+  local result3
+  result3=$(codex_strip_ansi "$input3")
+  if [ "$result3" = "plain text" ]; then
+    pass "strip_ansi: passes through plain text"
+  else
+    fail "strip_ansi plain" "Expected 'plain text', got '$result3'"
+  fi
+
+  # Test 4: Stdin mode
+  local result4
+  result4=$(echo -e '\033[1;32mbold green\033[0m' | codex_strip_ansi)
+  if [ "$result4" = "bold green" ]; then
+    pass "strip_ansi: works with stdin"
+  else
+    fail "strip_ansi stdin" "Expected 'bold green', got '$result4'"
+  fi
+
+  # Test 5: Empty input
+  local result5
+  result5=$(codex_strip_ansi "")
+  if [ -z "$result5" ]; then
+    pass "strip_ansi: handles empty input"
+  else
+    fail "strip_ansi empty" "Expected empty, got '$result5'"
+  fi
+}
+
+# ==============================================================================
+# Test: codex_write_prompt
+# ==============================================================================
+test_write_prompt() {
+  echo ""
+  echo "=== Testing: codex_write_prompt ==="
+
+  # Save original tmp dir
+  local orig_tmp_dir="${CODEX_TMP_DIR:-}"
+  local test_tmp=".test-tmp-write-prompt-$$"
+  CODEX_TMP_DIR="$test_tmp"
+  rm -rf "$test_tmp"
+
+  # Test 1: Write prompt content
+  local prompt_content="This is a test prompt for Codex."
+  local result
+  result=$(codex_write_prompt "$prompt_content" "test")
+
+  if [ -f "$result" ]; then
+    pass "write_prompt: creates file"
+  else
+    fail "write_prompt create" "File not created: $result"
+    rm -rf "$test_tmp"
+    CODEX_TMP_DIR="$orig_tmp_dir"
+    return
+  fi
+
+  # Test 2: File content matches
+  local content
+  content=$(cat "$result")
+  if [ "$content" = "$prompt_content" ]; then
+    pass "write_prompt: content matches"
+  else
+    fail "write_prompt content" "Content mismatch"
+  fi
+
+  # Test 3: File path includes prefix
+  if [[ "$result" == *"/codex-test-"* ]]; then
+    pass "write_prompt: path includes prefix"
+  else
+    fail "write_prompt prefix" "Expected prefix 'codex-test-' in path: $result"
+  fi
+
+  # Cleanup
+  rm -rf "$test_tmp"
+  CODEX_TMP_DIR="$orig_tmp_dir"
+}
+
+# ==============================================================================
+# Test: codex_build_exec_command
+# ==============================================================================
+test_build_exec_command() {
+  echo ""
+  echo "=== Testing: codex_build_exec_command ==="
+
+  # Test 1: Basic command with defaults
+  local cmd1
+  cmd1=$(codex_build_exec_command "/tmp/prompt.txt")
+  if [ "$cmd1" = 'cat "/tmp/prompt.txt" | codex exec -s "read-only" -' ]; then
+    pass "build_exec_command: basic command"
+  else
+    fail "build_exec_command basic" "Got: '$cmd1'"
+  fi
+
+  # Test 2: With custom sandbox
+  local cmd2
+  cmd2=$(codex_build_exec_command "/tmp/prompt.txt" "workspace-write")
+  if [ "$cmd2" = 'cat "/tmp/prompt.txt" | codex exec -s "workspace-write" -' ]; then
+    pass "build_exec_command: custom sandbox"
+  else
+    fail "build_exec_command sandbox" "Got: '$cmd2'"
+  fi
+
+  # Test 3: With model
+  local cmd3
+  cmd3=$(codex_build_exec_command "/tmp/prompt.txt" "read-only" "o4-mini")
+  if [ "$cmd3" = 'cat "/tmp/prompt.txt" | codex exec -s "read-only" -m "o4-mini" -' ]; then
+    pass "build_exec_command: with model"
+  else
+    fail "build_exec_command model" "Got: '$cmd3'"
+  fi
+
+  # Test 4: Empty model (should not add -m flag)
+  local cmd4
+  cmd4=$(codex_build_exec_command "/tmp/prompt.txt" "read-only" "")
+  if [[ "$cmd4" != *"-m"* ]]; then
+    pass "build_exec_command: no model flag when empty"
+  else
+    fail "build_exec_command empty model" "Should not contain -m flag: '$cmd4'"
+  fi
+}
+
+# ==============================================================================
 # Main
 # ==============================================================================
 main() {
@@ -1124,61 +587,26 @@ main() {
   echo "============================"
   echo ""
 
-  # Check if --tmux flag is passed
-  local include_tmux=false
-  if [ "${1:-}" = "--tmux" ]; then
-    include_tmux=true
-  fi
-
-  # Run tests (no tmux required)
+  # Run tests (no external dependencies required)
   test_source_helpers
   test_hash_content
   test_generate_signal
-  test_check_tmux
   test_multiple_source
   test_tmp_directory
-  test_tmux_cmd
 
-  # Lightweight metadata extraction tests (no tmux required)
+  # Lightweight metadata extraction tests
   test_extract_metadata
   test_get_field
   test_get_status
   test_get_verdict
 
-  # Language directive tests (no tmux required)
+  # Language directive tests
   test_get_language_directive
 
-  # Lock mechanism tests (no tmux required)
-  test_lock_acquire_release
-
-  # Socket resolution tests (no tmux required, but may skip some cases)
-  test_resolve_tmux_socket
-
-  # Chunked sending logic tests (no tmux required - tests awk splitting only)
-  test_send_chunked_splitting
-
-  # Stabilization configuration tests (no tmux required)
-  test_stabilize_config
-
-  # Prompt function tests (no tmux required for marker parsing)
-  test_send_prompt_file_marker_parsing
-
-  # Pane ID sanitization tests (no tmux required)
-  test_sanitize_pane_id
-
-  # tmux-dependent tests
-  if [ "$include_tmux" = true ] || [ -n "${TMUX:-}" ]; then
-    test_verify_pane
-    test_find_pane
-    test_send_prompt
-    test_wait_completion
-    test_capture_output
-  else
-    echo ""
-    echo "=== Skipping tmux-dependent tests ==="
-    echo "(Run with --tmux inside a tmux session for full tests)"
-    ((SKIP+=5))
-  fi
+  # New function tests
+  test_strip_ansi
+  test_write_prompt
+  test_build_exec_command
 
   # Summary
   echo ""
