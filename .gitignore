@@ -4,14 +4,8 @@
 # Temporary directory (contains all working files)
 /tmp/
 
-# Project-internal tmux socket
-/collab.sock
-
 # Claude Code local settings
 .claude/.settings.local.json
 
 # Project-specific codex-collab settings (use .example as template)
 .claude/codex-collab.local.md
-
-# Codex state file (session-specific, regenerated as needed)
-.claude/codex-state.json

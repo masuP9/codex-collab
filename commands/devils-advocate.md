@@ -85,7 +85,7 @@ export CODEX_SKILL_CONTEXT=1
 
 # Default mode based on environment
 DEFAULT_MODE="claude-only"
-if [ -n "$TMUX" ] && command -v codex &>/dev/null; then
+if command -v codex &>/dev/null; then
   DEFAULT_MODE="codex"
 fi
 
@@ -96,9 +96,9 @@ if [ -n "$MODE_OVERRIDE" ]; then
 else
   MODE="$DEFAULT_MODE"
   if [ "$MODE" = "codex" ]; then
-    echo "Mode: codex (auto-detected: tmux + Codex available)"
+    echo "Mode: codex (auto-detected: Codex CLI available)"
   else
-    echo "Mode: claude-only (auto-detected: tmux or Codex not available)"
+    echo "Mode: claude-only (auto-detected: Codex CLI not available)"
   fi
 fi
 
@@ -397,94 +397,32 @@ echo "Critique prompt prepared: $CRITIQUE_PROMPT"
 echo "Current round: $CURRENT_ROUND"
 ```
 
-2. Get or create Codex pane and send prompt:
+2. Run codex exec to get critique:
 
 ```bash
 export CODEX_SKILL_CONTEXT=1
 
-HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+# Source helpers
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+[ -z "$HELPERS" ] || [ ! -f "$HELPERS" ] && HELPERS="$(pwd)/scripts/codex-helpers.sh"
 [ -f "$HELPERS" ] && source "$HELPERS"
 
 TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
-DA_DIR="$TMP_DIR/devils-advocate"
-mkdir -p "$DA_DIR"
-PANE_ID_FILE="$TMP_DIR/codex-pane-id"
-SANDBOX="read-only"
 CRITIQUE_PROMPT="$TMP_DIR/devils-advocate-critique-prompt.txt"
-
-# Get or create Codex pane
-CODEX_PANE=""
-if [ -n "$TMUX" ]; then
-  CODEX_PANE=$(codex_get_or_create_pane "$SANDBOX" "$PANE_ID_FILE")
-fi
-
-# Graceful fallback to claude-only mode (not exit)
-if [ -z "$CODEX_PANE" ]; then
-  echo "WARNING: No Codex pane available. Switching to claude-only mode."
-  echo "MODE_SWITCHED=claude-only"
-  exit 0
-fi
-
-echo "Using Codex pane: $CODEX_PANE"
-
-# Capture state before sending
-BEFORE_CONTENT=$(tmux capture-pane -t "$CODEX_PANE" -p -S -5000)
-BEFORE_HASH=$(echo "$BEFORE_CONTENT" | codex_hash_content)
-
-# Send prompt using chunked method
-WAIT_TIMEOUT="${CODEX_WAIT_TIMEOUT:-180}"
-END_MARKER=$(codex_send_prompt_chunked "$CODEX_PANE" "$(cat "$CRITIQUE_PROMPT")")
-echo "Prompt sent to Codex pane: $CODEX_PANE"
-echo "Completion marker: $END_MARKER"
-
-# Save state for next step
-DA_STATE_FILE="$TMP_DIR/devils-advocate-state-${TASK_ID}.env"
-cat > "$DA_STATE_FILE" << EOF
-TASK_ID='$TASK_ID'
-STATE_FILE='$STATE_FILE'
-CODEX_PANE='$CODEX_PANE'
-END_MARKER='$END_MARKER'
-BEFORE_HASH='$BEFORE_HASH'
-CURRENT_ROUND='$CURRENT_ROUND'
-EOF
-echo "State saved to: $DA_STATE_FILE"
-```
-
-3. Wait for Codex response:
-
-```bash
-export CODEX_SKILL_CONTEXT=1
-
-HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
-[ -f "$HELPERS" ] && source "$HELPERS"
-
-TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
-DA_DIR="$TMP_DIR/devils-advocate"
-
-# Load state from previous step
-if [ -n "$TASK_ID" ]; then
-  DA_STATE_FILE="$TMP_DIR/devils-advocate-state-${TASK_ID}.env"
-else
-  DA_STATE_FILE=$(ls -t "$TMP_DIR"/devils-advocate-state-*.env 2>/dev/null | head -1)
-fi
-
-if [ -z "$DA_STATE_FILE" ] || [ ! -f "$DA_STATE_FILE" ]; then
-  echo "ERROR: State file not found. Run previous step first."
-  exit 1
-fi
-
-source "$DA_STATE_FILE"
-echo "Loaded state for task: $TASK_ID"
-
-# Wait for completion
 CRITIQUE_OUTPUT="$TMP_DIR/devils-advocate-critique-output.md"
-CODEX_WAIT_TIMEOUT=180
-codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
 
-# Capture output
-codex_capture_output "$CODEX_PANE" "$CRITIQUE_OUTPUT"
-echo "Output captured to: $CRITIQUE_OUTPUT"
+# Run codex exec (blocking - output goes to file)
+SANDBOX="read-only"
+codex_run_exec "$CRITIQUE_PROMPT" "$CRITIQUE_OUTPUT" "$SANDBOX"
+echo "Critique output saved to: $CRITIQUE_OUTPUT"
 ```
+
+> **Note:** `codex exec` はブロッキング実行のため、完了待機は不要です。Bash tool の `timeout` を `min(wait_timeout + 60, 600) * 1000` ms に設定してください。Codex が利用できない場合は claude-only モードにフォールバックします。
 
 4. Parse critique from response and update state file:
 
@@ -658,7 +596,7 @@ The Red Team uses these criteria for the final verdict:
 ## Error Handling
 
 **If Codex unavailable in codex mode:**
-- Fall back to claude-only mode
+- Fall back to claude-only mode (auto-detected when `command -v codex` fails)
 - Inform user: "Codex not available, proceeding with Claude-only mode"
 
 **If debate times out:**

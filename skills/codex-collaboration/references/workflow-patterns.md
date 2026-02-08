@@ -202,13 +202,13 @@ Complete
 | Review | Codex | Claude |
 | Sandbox | read-only | workspace-write |
 | Consultation | exchange (Codex-led) | consult (Claude-led) |
-| Best model fit | Reasoning (o3 系) | Most models (gpt-5 系, codex-*, o4-mini) |
+| Best model fit | Most models (default) | Explicit claude-leads setting |
 
 ## Pattern Selection Guide
 
 | Situation | Recommended Pattern |
 |-----------|---------------------|
-| Standard feature | Claude-Led Type (default) |
+| Standard feature | Review Type (default) |
 | Quick fix | Consultation |
 | Unknown approach | Parallel Exploration |
 | Large task | Divide and Conquer |

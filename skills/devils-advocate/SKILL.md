@@ -17,7 +17,7 @@ Devil's Advocate is a critical thinking technique that improves decision quality
 
 This skill helps developers validate designs, proposals, and decisions using a structured Blue Team (propose/defend) vs Red Team (critique/challenge) approach.
 
-**Key Feature**: In tmux mode, this skill can leverage Codex as the Red Team critic while Claude serves as the Blue Team advocate.
+**Key Feature**: In codex mode, this skill leverages Codex as the Red Team critic while Claude serves as the Blue Team advocate.
 
 ## Comparison with Strong Inference
 
@@ -32,7 +32,7 @@ This skill helps developers validate designs, proposals, and decisions using a s
 
 - The user has a proposal, design, or hypothesis to validate
 - Relevant context is available (code, docs, requirements)
-- For Codex collaboration mode: tmux session with Codex CLI available
+- For Codex collaboration mode: Codex CLI available (`codex exec`)
 
 ## Workflow Phases
 
@@ -115,7 +115,7 @@ After all rounds, Red Team provides:
 | `codex` | Claude | Codex |
 | `claude-only` | Claude | Claude |
 
-- **Default mode**: `codex` (when in tmux with Codex available)
+- **Default mode**: `codex` (when Codex CLI available)
 - **Fallback**: `claude-only` (automatic when Codex unavailable)
 
 ## Debate State File

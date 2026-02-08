@@ -21,19 +21,13 @@ This skill enables effective collaboration between two AI systems with **two wor
 
 デフォルト（`auto`）は常に **Codex-Leads** を選択。`claude-leads` は `workflow: claude-leads` を明示指定した場合のみ有効。
 
-**Key Feature**: tmux環境では、Codexはインタラクティブモードで起動し、ペインは永続化されます。一度起動したペインは再利用され、会話コンテキストが維持されます。WSL/その他の環境では`codex exec`で実行されます。
-
-**Pane Persistence (tmux)**: `/collab-codex`コマンドは既存のCodexペインを自動検出し、なければ新規起動します。ペインIDは`tmp/codex-pane-id`に保存され、以降の呼び出しで再利用されます。
-
-**ヘルスチェック**: `codex_verify_pane()`関数でペインの状態（存在・セッション・プロセス）を確認できます。
+**通信方式**: すべての Codex 呼び出しは `codex exec`（ステートレス実行）を使用。プロンプトを stdin から受け取り、結果を stdout に出力してブロッキング終了します。`codex_run_exec()` が入出力、ANSI 除去、exit code ハンドリングを統合処理します。
 
 ## Prerequisites
 
 Before starting collaboration:
 1. Verify `codex` CLI is available: `which codex` or `codex --version`
-2. Verify terminal launcher is available:
-   - WSL: `which wt.exe` (Windows Terminal)
-   - Linux: `which gnome-terminal` or `which xterm`
+2. Verify `codex exec` works: `echo "test" | codex exec -s read-only -`
 3. Check for project settings in `.claude/codex-collab.local.md`
 4. If Codex CLI unavailable, inform user and proceed with Claude-only mode
 
@@ -54,58 +48,17 @@ When receiving a task for collaboration:
    - Check existing tests
    - Review recent changes
 
-### Phase 2: Launch Codex for Planning (New Pane)
+### Phase 2: Request Plan from Codex
 
-1. Prepare files in project directory:
+1. Prepare prompt and run codex exec:
 ```bash
-CODEX_OUTPUT="$(pwd)/.codex-plan-output.md"
-CODEX_PROMPT="$(pwd)/.codex-plan-prompt.txt"
-rm -f "$CODEX_OUTPUT"
-
-cat > "$CODEX_PROMPT" << 'EOF'
-[Planning prompt content]
-EOF
+source scripts/codex-helpers.sh
+PROMPT_FILE=$(codex_write_prompt "$PLANNING_PROMPT" "plan")
+OUTPUT_FILE="$(codex_tmp_path 'codex-plan-output.md')"
+codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only"
 ```
 
-2. Launch Codex in a new pane:
-
-**tmux mode** (recommended - instant completion detection):
-```bash
-# Unique signal: PID + timestamp + random suffix to avoid collisions
-SIGNAL="codex-plan-$$-$(date +%s)-$RANDOM"
-tmux split-window -h -d \
-  "cd \"$(pwd)\"; \
-   cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE]; \
-   echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]; \
-   tmux wait-for -S \"$SIGNAL\""
-```
-
-**WSL / Windows Terminal:**
-```bash
-# Note: using ; instead of && so marker is written even on Codex failure
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE]; echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
-```
-
-3. Wait for completion:
-
-**tmux mode** (signal-based):
-```bash
-# Note: Requires GNU coreutils `timeout`. On macOS: `brew install coreutils` (provides `gtimeout`)
-timeout 180s tmux wait-for "$SIGNAL" && echo "Codex completed"
-```
-
-**wt/inline mode** (file polling):
-```bash
-for i in {1..120}; do
-  if grep -q "=== CODEX_DONE ===" "$CODEX_OUTPUT" 2>/dev/null; then
-    echo "Codex completed after ${i}s"
-    break
-  fi
-  sleep 1
-done
-```
-
-4. Read results from output file
+2. Read results from output file
 
 ### Phase 3: Implement Based on Plan
 
@@ -116,62 +69,26 @@ After receiving Codex's plan:
 3. Execute implementation step by step
 4. Track changes made
 
-### Phase 4: Launch Codex for Review (New Pane)
+### Phase 4: Request Review from Codex
 
 After implementation:
 
 1. **Stage changes for Codex visibility** (important!):
 ```bash
 git add -A
-git reset -- .codex-*.md .codex-*.txt 2>/dev/null || true
+git reset -- tmp/ 2>/dev/null || true
 ```
-> **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method. Some tools may use `git ls-files` (which only shows tracked files) or respect `.gitignore`. Staging guarantees consistency.
->
-> **Note:** This is staging only, not a commit. After review, you can optionally run `git reset` to unstage if needed.
->
-> **Note:** The `git reset` line explicitly unstages temporary files (`.codex-*.md`, `.codex-*.txt`) to ensure they are not included in the review, even if the user's project doesn't have a `.gitignore` for these files.
+> **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method.
 
-2. Prepare review files:
+2. Prepare review prompt and run codex exec:
 ```bash
-CODEX_REVIEW="$(pwd)/.codex-review-output.md"
-REVIEW_PROMPT="$(pwd)/.codex-review-prompt.txt"
-rm -f "$CODEX_REVIEW"
-
-cat > "$REVIEW_PROMPT" << 'EOF'
-[Review prompt with original plan and diff summary]
-EOF
+source scripts/codex-helpers.sh
+REVIEW_PROMPT_FILE=$(codex_write_prompt "$REVIEW_PROMPT" "review")
+REVIEW_OUTPUT="$(codex_tmp_path 'codex-review-output.md')"
+codex_run_exec "$REVIEW_PROMPT_FILE" "$REVIEW_OUTPUT" "read-only"
 ```
 
-3. Launch Codex for review:
-
-**tmux mode** (recommended):
-```bash
-# Unique signal: PID + timestamp + random suffix to avoid collisions
-SIGNAL="codex-review-$$-$(date +%s)-$RANDOM"
-tmux split-window -h -d \
-  "cd \"$(pwd)\"; \
-   cat [REVIEW_PROMPT] | codex exec -s read-only - 2>&1 | tee [CODEX_REVIEW]; \
-   echo '=== CODEX_DONE ===' >> [CODEX_REVIEW]; \
-   tmux wait-for -S \"$SIGNAL\""
-
-# Note: Requires GNU coreutils `timeout`. On macOS: `brew install coreutils`
-timeout 180s tmux wait-for "$SIGNAL" && echo "Review completed"
-```
-
-**wt mode:**
-```bash
-# Note: using ; instead of && so marker is written even on Codex failure
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [REVIEW_PROMPT] | codex exec -s read-only - 2>&1 | tee [CODEX_REVIEW]; echo '=== CODEX_DONE ===' >> [CODEX_REVIEW]"
-
-for i in {1..120}; do
-  if grep -q "=== CODEX_DONE ===" "$CODEX_REVIEW" 2>/dev/null; then
-    break
-  fi
-  sleep 1
-done
-```
-
-4. Read and process review results
+3. Read and process review results
 
 The review prompt must request:
 - Design alignment check
@@ -272,52 +189,21 @@ Accept review as "Pass" only when:
 - [ ] Design aligns with original plan
 - [ ] Test coverage adequate
 
-## Launching Codex in New Pane
+## Running Codex
 
-### WSL / Windows Terminal (Pane - Default)
+### codex exec パターン
 
-```bash
-# Output files in project directory (shared between WSL sessions)
-CODEX_OUTPUT="$(pwd)/.codex-output.md"
-CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
-rm -f "$CODEX_OUTPUT"
-
-# Write prompt to file
-cat > "$CODEX_PROMPT" << 'EOF'
-Your prompt here
-EOF
-
-# Launch in new pane (use cat | codex exec - format)
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] ; echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
-
-# Auto-detect completion (poll for marker)
-for i in {1..120}; do
-  if grep -q "=== CODEX_DONE ===" "$CODEX_OUTPUT" 2>/dev/null; then
-    echo "Codex completed after ${i}s"
-    break
-  fi
-  sleep 1
-done
-```
-
-### Native Linux (gnome-terminal)
+すべての Codex 呼び出しは `codex exec`（ステートレス実行）を使用します:
 
 ```bash
-CODEX_OUTPUT="$(pwd)/.codex-output.md"
-CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
-rm -f "$CODEX_OUTPUT"
+# ヘルパー関数を使用（推奨）
+source scripts/codex-helpers.sh
+PROMPT_FILE=$(codex_write_prompt "$PROMPT_CONTENT" "plan")
+OUTPUT_FILE="$(codex_tmp_path 'codex-output.md')"
+codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only" "o4-mini"
 
-gnome-terminal -- bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT ; echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
-```
-
-### Native Linux (xterm)
-
-```bash
-CODEX_OUTPUT="$(pwd)/.codex-output.md"
-CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
-rm -f "$CODEX_OUTPUT"
-
-xterm -e bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT ; echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
+# 直接実行
+cat prompt.txt | codex exec -s read-only -m o4-mini - 2>&1 | tee output.md
 ```
 
 ### Codex CLI Options
@@ -333,18 +219,12 @@ xterm -e bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODE
 - Each `codex exec` call is stateless (no conversation history between calls)
 - Include all necessary context in each prompt
 - Use `-s read-only` for planning/review tasks (Codex won't modify files)
-- **Project directory**: Output files saved in project directory (not `/tmp`) to share between WSL sessions. These files (`.codex-*.md`, `.codex-*.txt`) are explicitly unstaged after `git add -A` to ensure they don't appear in review diffs
-- **Completion marker**: `=== CODEX_DONE ===` appended to output file for auto-detection
+- Use `-s workspace-write` for implementation tasks (claude-leads workflow)
+- Output may contain ANSI escape codes; use `codex_strip_ansi()` or `codex_run_exec()` to clean
 - **Stdin input**: Use `cat file | codex exec -` format to avoid escaping issues
+- **Timeout**: Bash tool has max 600s (10 minutes) timeout
 
 ## Error Handling
-
-### Terminal Launcher Unavailable
-
-If `wt.exe` is not available (non-WSL/Linux環境):
-1. Fall back to running `codex exec` in current terminal
-2. Inform user: "WSL環境ではないため、現在のターミナルでCodexを実行します。完了まで出力は表示されません。"
-3. 出力はファイルに保存されるので、完了後に結果を確認できます
 
 ### CLI Unavailable
 
@@ -355,17 +235,17 @@ If `codex` command is not found:
 
 ### Codex Timeout or Error
 
-If Codex returns error:
+If `codex exec` returns non-zero exit code or times out:
 1. Check error message in output file
 2. Retry once with simplified prompt
 3. If still failing, proceed manually and inform user
 
-### Auto-detection Timeout
+### Bash Tool Timeout
 
-If 120 seconds pass without detecting completion marker:
-1. Ask user if Codex is still running
-2. Offer to extend wait time or read partial output
-3. Check output file manually: `cat "$CODEX_OUTPUT"`
+Bash tool has max 600s (10 minutes) timeout. For long-running tasks:
+1. Set appropriate `codex.wait_timeout` setting
+2. Consider breaking tasks into smaller parts
+3. Use `run_in_background: true` for background execution
 
 ## Structured Communication Protocol
 

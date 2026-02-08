@@ -178,7 +178,7 @@ echo "Your prompt" | codex exec -s read-only -
 cat prompt.txt | codex exec -s read-only -
 ```
 
-**Note**: The stdin pipe format (`cat file | codex exec -`) is preferred over `$(cat file)` to avoid escaping issues, especially when launching Codex through multiple shell layers (e.g., wt.exe → wsl.exe → zsh).
+**Note**: The stdin pipe format (`cat file | codex exec -`) is preferred over `$(cat file)` to avoid escaping issues.
 
 ## Subcommands
 
@@ -199,78 +199,33 @@ Run a code review against the current repository:
 codex exec review
 ```
 
-## Launching in New Pane
+## Running with Helper Functions
 
-To see Codex output in real-time, launch it in a separate pane. Completion is auto-detected via a marker.
-
-### WSL / Windows Terminal (Pane - Default)
+The recommended way to run `codex exec` within codex-collab is via the helper functions in `scripts/codex-helpers.sh`:
 
 ```bash
-# Output files in project directory (shared between WSL sessions)
-CODEX_OUTPUT="$(pwd)/.codex-output.md"
-CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
-rm -f "$CODEX_OUTPUT"
-
-# Write prompt to file
-cat > "$CODEX_PROMPT" << 'EOF'
-Your prompt here
-EOF
-
-# Launch in new pane (use cat | codex exec - format)
-wt.exe -w -1 -d "$(pwd)" -p Ubuntu wsl.exe zsh -i -l -c "cat [PROMPT_FILE] | codex exec -s read-only - 2>&1 | tee [OUTPUT_FILE] ; echo '=== CODEX_DONE ===' >> [OUTPUT_FILE]"
-
-# Auto-detect completion (poll for marker)
-for i in {1..120}; do
-  if grep -q "=== CODEX_DONE ===" "$CODEX_OUTPUT" 2>/dev/null; then
-    echo "Codex completed after ${i}s"
-    break
-  fi
-  sleep 1
-done
+export CODEX_SKILL_CONTEXT=1
+source scripts/codex-helpers.sh
+PROMPT_FILE=$(codex_write_prompt "$PROMPT_CONTENT" "plan")
+OUTPUT_FILE="$(codex_tmp_path 'codex-output.md')"
+codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only" "o4-mini"
 ```
 
-**Options:**
-- `-w -1` - 新しいウィンドウで開く（確実に別ウィンドウで起動）
-- `-d "$(pwd)"` - Current directory (WSL path)
-- `-p <profile>` - Terminal profile (e.g., `Ubuntu`)
+### Helper Functions
 
-### Native Linux (gnome-terminal)
-
-```bash
-CODEX_OUTPUT="$(pwd)/.codex-output.md"
-CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
-rm -f "$CODEX_OUTPUT"
-
-gnome-terminal -- bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT ; echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
-```
-
-### Native Linux (xterm)
-
-```bash
-CODEX_OUTPUT="$(pwd)/.codex-output.md"
-CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
-rm -f "$CODEX_OUTPUT"
-
-xterm -e bash -c "cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT ; echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT"
-```
-
-### macOS (Terminal.app)
-
-```bash
-CODEX_OUTPUT="$(pwd)/.codex-output.md"
-CODEX_PROMPT="$(pwd)/.codex-prompt.txt"
-rm -f "$CODEX_OUTPUT"
-
-osascript -e "tell app \"Terminal\" to do script \"cat $CODEX_PROMPT | codex exec -s read-only - 2>&1 | tee $CODEX_OUTPUT ; echo '=== CODEX_DONE ===' >> $CODEX_OUTPUT\""
-```
+| Function | Purpose |
+|----------|---------|
+| `codex_write_prompt(content, prefix)` | Write prompt to temp file, return path |
+| `codex_run_exec(prompt, output, sandbox, model)` | Run codex exec with full I/O handling |
+| `codex_build_exec_command(prompt, sandbox, model)` | Build command string (for eval) |
+| `codex_strip_ansi(text)` | Remove ANSI escape codes from output |
 
 ### Key Points
 
-- **Project directory**: Output files saved in project directory (not `/tmp`) to share between WSL sessions
+- **Blocking execution**: `codex exec` blocks until completion, no polling needed
+- **ANSI stripping**: Output may contain ANSI escape codes; `codex_run_exec` handles this automatically
 - **Stdin input**: Use `cat file | codex exec -` format to avoid escaping issues
-- **Completion marker**: `=== CODEX_DONE ===` appended to output file for auto-detection
-- User can watch Codex in real-time in the new pane
-- Claude Code auto-detects completion and reads results from output file
+- **Timeout**: Bash tool has max 600s (10 minutes) timeout; set `codex.wait_timeout` accordingly
 
 ## Error Handling
 
@@ -279,8 +234,7 @@ osascript -e "tell app \"Terminal\" to do script \"cat $CODEX_PROMPT | codex exe
 | Error | Cause | Resolution |
 |-------|-------|------------|
 | command not found | Codex CLI not installed | Install Codex CLI or add to PATH |
-| wt.exe not found | Not in WSL or Windows Terminal not installed | Use alternative terminal launcher |
-| Timeout | Complex operation | Simplify prompt |
+| Timeout | Complex operation | Simplify prompt or increase `codex.wait_timeout` |
 | Model unavailable | API issues | Try different model or retry |
 | API error | Rate limit or auth issue | Check API key and quota |
 
