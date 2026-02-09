@@ -170,7 +170,7 @@ codex_build_exec_command() {
   local sandbox="${2:-read-only}"
   local model="${3:-}"
 
-  local cmd="cat \"${prompt_file}\" | codex exec"
+  local cmd="codex exec"
 
   # Add sandbox option
   cmd="${cmd} -s \"${sandbox}\""
@@ -180,8 +180,8 @@ codex_build_exec_command() {
     cmd="${cmd} -m \"${model}\""
   fi
 
-  # Read from stdin (the - flag)
-  cmd="${cmd} -"
+  # Read from stdin via redirect (more reliable than pipe)
+  cmd="${cmd} - < \"${prompt_file}\""
 
   echo "$cmd"
 }
@@ -225,12 +225,12 @@ codex_run_exec() {
   fi
   codex_args+=(-)
 
-  # Execute codex and capture output
+  # Execute codex with stdin redirect and capture output
   # Use tee to save to file while also showing stdout
   # Strip ANSI escape codes from output
   # pipefail ensures codex's exit code propagates through the pipe
   local exit_code=0
-  (set -o pipefail; cat "$prompt_file" | codex "${codex_args[@]}" 2>&1 | codex_strip_ansi | tee "$output_file") || exit_code=$?
+  (set -o pipefail; codex "${codex_args[@]}" < "$prompt_file" 2>&1 | codex_strip_ansi | tee "$output_file") || exit_code=$?
 
   if [ "$exit_code" -ne 0 ]; then
     codex_debug "run_exec: codex exited with code $exit_code"

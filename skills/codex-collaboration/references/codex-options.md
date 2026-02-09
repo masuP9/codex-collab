@@ -165,7 +165,7 @@ with multiple lines
 and code blocks
 EOF
 
-cat prompt.txt | codex exec -s read-only -
+codex exec -s read-only - < prompt.txt
 ```
 
 ### Stdin Input
@@ -173,12 +173,14 @@ cat prompt.txt | codex exec -s read-only -
 Read prompt from stdin using `-` argument:
 
 ```bash
-echo "Your prompt" | codex exec -s read-only -
+# Redirect from file (recommended)
+codex exec -s read-only - < prompt.txt
 
-cat prompt.txt | codex exec -s read-only -
+# Pipe from echo (may not work reliably with all codex versions)
+echo "Your prompt" | codex exec -s read-only -
 ```
 
-**Note**: The stdin pipe format (`cat file | codex exec -`) is preferred over `$(cat file)` to avoid escaping issues.
+**Note**: The redirect format (`codex exec - < file`) is preferred over pipe format (`cat file | codex exec -`) for reliability.
 
 ## Subcommands
 

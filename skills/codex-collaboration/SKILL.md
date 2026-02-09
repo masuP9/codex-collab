@@ -27,7 +27,7 @@ This skill enables effective collaboration between two AI systems with **two wor
 
 Before starting collaboration:
 1. Verify `codex` CLI is available: `which codex` or `codex --version`
-2. Verify `codex exec` works: `echo "test" | codex exec -s read-only -`
+2. Verify `codex exec` works: `codex exec -s read-only - <<< "test"`
 3. Check for project settings in `.claude/codex-collab.local.md`
 4. If Codex CLI unavailable, inform user and proceed with Claude-only mode
 
@@ -203,7 +203,7 @@ OUTPUT_FILE="$(codex_tmp_path 'codex-output.md')"
 codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only" "o4-mini"
 
 # 直接実行
-cat prompt.txt | codex exec -s read-only -m o4-mini - 2>&1 | tee output.md
+codex exec -s read-only -m o4-mini - < prompt.txt 2>&1 | tee output.md
 ```
 
 ### Codex CLI Options
@@ -221,8 +221,9 @@ cat prompt.txt | codex exec -s read-only -m o4-mini - 2>&1 | tee output.md
 - Use `-s read-only` for planning/review tasks (Codex won't modify files)
 - Use `-s workspace-write` for implementation tasks (claude-leads workflow)
 - Output may contain ANSI escape codes; use `codex_strip_ansi()` or `codex_run_exec()` to clean
-- **Stdin input**: Use `cat file | codex exec -` format to avoid escaping issues
+- **Stdin input**: Use redirect format (`codex exec - < file`) for reliable input
 - **Timeout**: Bash tool has max 600s (10 minutes) timeout
+- **Background agents**: Background subagents (`run_in_background: true`) require pre-approved Bash permissions in `~/.claude/settings.json` or `.claude/settings.json`. Without pre-approval, Bash tool calls are auto-denied because permission prompts are unavailable in background mode.
 
 ## Error Handling
 

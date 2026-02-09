@@ -43,10 +43,10 @@ Codex CLI との通信には `codex exec` を使用する。プロンプトを s
 
 ```sh
 # 基本パターン
-cat prompt.txt | codex exec -s read-only -
+codex exec -s read-only - < prompt.txt
 
 # モデル指定
-cat prompt.txt | codex exec -s read-only -m o4-mini -
+codex exec -s read-only -m o4-mini - < prompt.txt
 ```
 
 - 各呼び出しはステートレス（会話コンテキストは保持されない）
