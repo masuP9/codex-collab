@@ -545,7 +545,7 @@ test_build_exec_command() {
   # Test 1: Basic command with defaults
   local cmd1
   cmd1=$(codex_build_exec_command "/tmp/prompt.txt")
-  if [ "$cmd1" = 'cat "/tmp/prompt.txt" | codex exec -s "read-only" -' ]; then
+  if [ "$cmd1" = 'codex exec -s "read-only" - < "/tmp/prompt.txt"' ]; then
     pass "build_exec_command: basic command"
   else
     fail "build_exec_command basic" "Got: '$cmd1'"
@@ -554,7 +554,7 @@ test_build_exec_command() {
   # Test 2: With custom sandbox
   local cmd2
   cmd2=$(codex_build_exec_command "/tmp/prompt.txt" "workspace-write")
-  if [ "$cmd2" = 'cat "/tmp/prompt.txt" | codex exec -s "workspace-write" -' ]; then
+  if [ "$cmd2" = 'codex exec -s "workspace-write" - < "/tmp/prompt.txt"' ]; then
     pass "build_exec_command: custom sandbox"
   else
     fail "build_exec_command sandbox" "Got: '$cmd2'"
@@ -563,7 +563,7 @@ test_build_exec_command() {
   # Test 3: With model
   local cmd3
   cmd3=$(codex_build_exec_command "/tmp/prompt.txt" "read-only" "o4-mini")
-  if [ "$cmd3" = 'cat "/tmp/prompt.txt" | codex exec -s "read-only" -m "o4-mini" -' ]; then
+  if [ "$cmd3" = 'codex exec -s "read-only" -m "o4-mini" - < "/tmp/prompt.txt"' ]; then
     pass "build_exec_command: with model"
   else
     fail "build_exec_command model" "Got: '$cmd3'"
