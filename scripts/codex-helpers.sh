@@ -326,3 +326,159 @@ codex_get_verdict() {
       ;;
   esac
 }
+
+# ==============================================================================
+# Codex Review Runner
+# ==============================================================================
+
+# Run codex review --uncommitted with full I/O handling
+# Usage: codex_run_review "output_file" "model"
+# Arguments:
+#   output_file - Path to save output (optional, defaults to tmp/codex-review-output-$$.md)
+#   model       - Model name (optional)
+# Returns: Exit code (0=success, non-zero=fallback needed)
+# Side effects: Writes output to output_file, strips ANSI codes
+#
+# Note: codex review --uncommitted does not accept a custom prompt as a
+# positional argument. Custom review instructions should be provided via
+# the fallback codex exec path instead.
+codex_run_review() {
+  local output_file="${1:-$(codex_tmp_path "codex-review-output-$$.md")}"
+  local model="${2:-}"
+
+  # Check if codex command exists
+  if ! command -v codex &>/dev/null; then
+    codex_debug "run_review: codex command not found"
+    return 127
+  fi
+
+  # Check if codex review subcommand is available
+  if ! codex review --help &>/dev/null 2>&1; then
+    codex_debug "run_review: codex review subcommand not available"
+    return 127
+  fi
+
+  codex_debug "run_review: output=$output_file model=$model"
+
+  local -a review_args=(review --uncommitted)
+
+  # Try with model config if specified
+  if [ -n "$model" ]; then
+    review_args+=(-c "model=\"${model}\"")
+  fi
+
+  local exit_code=0
+  (set -o pipefail; codex "${review_args[@]}" 2>&1 | codex_strip_ansi | tee "$output_file") || exit_code=$?
+
+  # If model config caused failure, retry without it
+  if [ "$exit_code" -ne 0 ] && [ -n "$model" ]; then
+    codex_debug "run_review: retrying without model config (exit_code=$exit_code)"
+    review_args=(review --uncommitted)
+    exit_code=0
+    (set -o pipefail; codex "${review_args[@]}" 2>&1 | codex_strip_ansi | tee "$output_file") || exit_code=$?
+  fi
+
+  # Empty or very short output is also a failure
+  if [ "$exit_code" -eq 0 ] && [ ! -s "$output_file" ]; then
+    codex_debug "run_review: output file is empty"
+    exit_code=1
+  fi
+
+  if [ "$exit_code" -ne 0 ]; then
+    codex_debug "run_review: codex review exited with code $exit_code"
+  else
+    codex_debug "run_review: output saved to $output_file ($(wc -l < "$output_file") lines)"
+  fi
+
+  return "$exit_code"
+}
+
+# ==============================================================================
+# Verdict Inference
+# ==============================================================================
+
+# Infer verdict from review response using multiple strategies
+# Usage: verdict=$(codex_infer_verdict "$response")
+# Returns: "pass", "conditional", "fail", or empty (unable to determine)
+# Exit code: 0=verdict determined, 1=unable to determine
+#
+# Strategy order:
+#   1. Metadata block (verdict: pass/conditional/fail)
+#   2. [P1]-[P4] priority markers ([P1]/[P2] → fail, [P3]/[P4] → conditional)
+#   3. Unable to determine → empty string, exit 1 (caller should retry/fallback)
+#
+# Note: We intentionally do NOT infer "pass" from the absence of markers.
+# A response without markers may contain plain-text negative feedback that
+# would be misclassified as pass. The caller should retry with a prompt
+# requesting explicit verdict or treat as "conditional".
+codex_infer_verdict() {
+  local response="$1"
+
+  # Strategy 1: metadata block
+  local metadata verdict
+  metadata=$(codex_extract_metadata "$response")
+  if [ -n "$metadata" ]; then
+    verdict=$(codex_get_verdict "$metadata")
+    if [ -n "$verdict" ]; then
+      echo "$verdict"
+      return 0
+    fi
+  fi
+
+  # Strategy 2: [P1]-[P4] priority markers
+  local has_p1 has_p2 has_p3 has_p4
+  has_p1=$(echo "$response" | grep -c '\[P1\]' || true)
+  has_p2=$(echo "$response" | grep -c '\[P2\]' || true)
+  has_p3=$(echo "$response" | grep -c '\[P3\]' || true)
+  has_p4=$(echo "$response" | grep -c '\[P4\]' || true)
+
+  if [ "$has_p1" -gt 0 ] || [ "$has_p2" -gt 0 ]; then
+    echo "fail"
+    return 0
+  elif [ "$has_p3" -gt 0 ] || [ "$has_p4" -gt 0 ]; then
+    echo "conditional"
+    return 0
+  fi
+
+  # Unable to determine - caller should retry or treat as conditional
+  echo ""
+  return 1
+}
+
+# ==============================================================================
+# Review Findings Extraction
+# ==============================================================================
+
+# Extract review findings from response
+# Usage: findings=$(codex_extract_review_findings "$response")
+# Returns: Extracted findings text (from metadata findings: or [P1]-[P4] markers)
+codex_extract_review_findings() {
+  local response="$1"
+  local findings=""
+
+  # Strategy 1: metadata findings
+  local metadata
+  metadata=$(codex_extract_metadata "$response")
+  if [ -n "$metadata" ]; then
+    local meta_findings
+    meta_findings=$(echo "$metadata" | awk '
+      /^findings:/ { in_findings=1; next }
+      in_findings && /^  - / { print substr($0, 5); next }
+      in_findings && /^[^ ]/ { in_findings=0 }
+    ')
+    if [ -n "$meta_findings" ]; then
+      findings="$meta_findings"
+    fi
+  fi
+
+  # Strategy 2: [P1]-[P4] markers (append if metadata had no findings)
+  if [ -z "$findings" ]; then
+    local marker_findings
+    marker_findings=$(echo "$response" | grep -E '\[P[1-4]\]' || true)
+    if [ -n "$marker_findings" ]; then
+      findings="$marker_findings"
+    fi
+  fi
+
+  echo "$findings"
+}

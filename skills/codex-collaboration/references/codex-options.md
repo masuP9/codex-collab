@@ -201,16 +201,77 @@ Run a code review against the current repository:
 codex exec review
 ```
 
+## codex review Command
+
+Run a code review against the current repository's uncommitted changes.
+
+### Basic Syntax
+
+```bash
+codex review [OPTIONS] [PROMPT]
+```
+
+### Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--uncommitted` | | Review uncommitted/staged changes |
+| `--config <key=value>` | `-c` | Override config values (e.g., `model="o4-mini"`) |
+
+### Usage
+
+```bash
+# Review uncommitted changes
+codex review --uncommitted
+
+# With custom prompt
+codex review --uncommitted "Focus on security vulnerabilities"
+
+# With model override
+codex review --uncommitted -c 'model="o4-mini"'
+```
+
+### Key Differences from `codex exec`
+
+| Aspect | `codex review` | `codex exec` |
+|--------|---------------|-------------|
+| Diff collection | Automatic (uncommitted changes) | Manual (must include in prompt) |
+| Purpose | Specialized for code review | General-purpose execution |
+| Prompt | Optional (enhances default review) | Required |
+| Sandbox | Not applicable (read-only by design) | Configurable via `-s` |
+
+### Integration with codex-collab
+
+The recommended approach for review in codex-collab is:
+1. **Primary**: Use `codex review --uncommitted` via `codex_run_review()`
+2. **Fallback**: If `codex review` is unavailable or fails, fall back to `codex exec` via `codex_run_exec()` with diff file reference
+
+```bash
+# Primary: codex review
+codex_run_review "$OUTPUT_FILE" "$MODEL" || REVIEW_EXIT=$?
+
+# Fallback: codex exec (if review fails)
+if [ "$REVIEW_EXIT" -ne 0 ]; then
+  codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only" "$MODEL"
+fi
+```
+
 ## Running with Helper Functions
 
-The recommended way to run `codex exec` within codex-collab is via the helper functions in `scripts/codex-helpers.sh`:
+The recommended way to run Codex within codex-collab is via the helper functions in `scripts/codex-helpers.sh`:
 
 ```bash
 export CODEX_SKILL_CONTEXT=1
 source scripts/codex-helpers.sh
+
+# For general execution
 PROMPT_FILE=$(codex_write_prompt "$PROMPT_CONTENT" "plan")
 OUTPUT_FILE="$(codex_tmp_path 'codex-output.md')"
 codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only" "o4-mini"
+
+# For code review (preferred for review phase)
+REVIEW_OUTPUT="$(codex_tmp_path 'codex-review-output.md')"
+codex_run_review "$REVIEW_OUTPUT" "o4-mini"
 ```
 
 ### Helper Functions
@@ -219,15 +280,19 @@ codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only" "o4-mini"
 |----------|---------|
 | `codex_write_prompt(content, prefix)` | Write prompt to temp file, return path |
 | `codex_run_exec(prompt, output, sandbox, model)` | Run codex exec with full I/O handling |
+| `codex_run_review(output, model)` | Run codex review --uncommitted with fallback support |
+| `codex_infer_verdict(response)` | Infer verdict from review response (metadata → [P1]-[P4] → pass) |
+| `codex_extract_review_findings(response)` | Extract findings from review response |
 | `codex_build_exec_command(prompt, sandbox, model)` | Build command string (for eval) |
 | `codex_strip_ansi(text)` | Remove ANSI escape codes from output |
 
 ### Key Points
 
-- **Blocking execution**: `codex exec` blocks until completion, no polling needed
-- **ANSI stripping**: Output may contain ANSI escape codes; `codex_run_exec` handles this automatically
+- **Blocking execution**: Both `codex exec` and `codex review` block until completion, no polling needed
+- **ANSI stripping**: Output may contain ANSI escape codes; `codex_run_exec` and `codex_run_review` handle this automatically
 - **Stdin input**: Use `cat file | codex exec -` format to avoid escaping issues
 - **Timeout**: Bash tool has max 600s (10 minutes) timeout; set `codex.wait_timeout` accordingly
+- **Fallback**: `codex_run_review()` returns non-zero on any failure; caller should fall back to `codex_run_exec()`
 
 ## Error Handling
 

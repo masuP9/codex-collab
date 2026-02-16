@@ -80,21 +80,33 @@ git reset -- tmp/ 2>/dev/null || true
 ```
 > **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method.
 
-2. Prepare review prompt and run codex exec:
+2. Run review using `codex review` (primary) with `codex exec` fallback:
 ```bash
 source scripts/codex-helpers.sh
-REVIEW_PROMPT_FILE=$(codex_write_prompt "$REVIEW_PROMPT" "review")
 REVIEW_OUTPUT="$(codex_tmp_path 'codex-review-output.md')"
-codex_run_exec "$REVIEW_PROMPT_FILE" "$REVIEW_OUTPUT" "read-only"
+# Primary: codex review --uncommitted (auto-collects diff)
+# Note: --uncommitted does not accept custom prompt; instructions go in exec fallback
+codex_run_review "$REVIEW_OUTPUT" "$MODEL" || REVIEW_EXIT=$?
+
+# Fallback: codex exec with diff file reference
+if [ "${REVIEW_EXIT:-0}" -ne 0 ]; then
+  REVIEW_PROMPT_FILE=$(codex_write_prompt "$REVIEW_PROMPT" "review")
+  codex_run_exec "$REVIEW_PROMPT_FILE" "$REVIEW_OUTPUT" "read-only"
+fi
 ```
 
-3. Read and process review results
+3. Parse verdict and findings:
+```bash
+RESPONSE=$(cat "$REVIEW_OUTPUT")
+VERDICT=$(codex_infer_verdict "$RESPONSE") || true
+FINDINGS=$(codex_extract_review_findings "$RESPONSE")
+```
 
-The review prompt must request:
-- Design alignment check
-- Bug/vulnerability detection
-- Improvement suggestions
-- Verdict: Pass / Fail / Conditional
+The review uses `[P1]-[P4]` priority markers as the primary source for verdict inference:
+- `[P1]`/`[P2]` → fail
+- `[P3]`/`[P4]` → conditional
+- No findings + sufficient output → pass
+- Metadata block (`verdict: pass/conditional/fail`) is also supported as an alternative
 
 ### Phase 5: Handle Review Result
 
