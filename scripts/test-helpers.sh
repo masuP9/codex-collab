@@ -885,6 +885,408 @@ MOCK
 }
 
 # ==============================================================================
+# Test: codex_save_session_state / codex_load_session_state
+# ==============================================================================
+test_save_load_session_state() {
+  echo ""
+  echo "=== Testing: codex_save_session_state / codex_load_session_state ==="
+
+  # Save original tmp dir
+  local orig_tmp_dir="${CODEX_TMP_DIR:-}"
+  local test_tmp=".test-tmp-session-$$"
+  CODEX_TMP_DIR="$test_tmp"
+  rm -rf "$test_tmp"
+
+  # Test 1: Save session state
+  local state_file
+  state_file=$(codex_save_session_state "test-task-1" "mcp" "thread-abc-123" "read-only" "codex-leads")
+
+  if [ -f "$state_file" ]; then
+    pass "save_session_state: creates file"
+  else
+    fail "save_session_state create" "File not created: $state_file"
+    rm -rf "$test_tmp"
+    CODEX_TMP_DIR="$orig_tmp_dir"
+    return
+  fi
+
+  # Test 2: Load session state (call directly, not in subshell, so globals are set)
+  SESSION_MODE="" SESSION_THREAD_ID="" SESSION_SANDBOX="" SESSION_WORKFLOW=""
+  local load_exit=0
+  codex_load_session_state "test-task-1" > /dev/null || load_exit=$?
+
+  if [ "$load_exit" -eq 0 ]; then
+    pass "load_session_state: loads successfully"
+  else
+    fail "load_session_state" "Expected exit 0, got $load_exit"
+  fi
+
+  # Test 3: Verify loaded values
+  if [ "$SESSION_MODE" = "mcp" ]; then
+    pass "load_session_state: mode=mcp"
+  else
+    fail "load_session_state mode" "Expected 'mcp', got '$SESSION_MODE'"
+  fi
+
+  if [ "$SESSION_THREAD_ID" = "thread-abc-123" ]; then
+    pass "load_session_state: threadId=thread-abc-123"
+  else
+    fail "load_session_state threadId" "Expected 'thread-abc-123', got '$SESSION_THREAD_ID'"
+  fi
+
+  if [ "$SESSION_SANDBOX" = "read-only" ]; then
+    pass "load_session_state: sandbox=read-only"
+  else
+    fail "load_session_state sandbox" "Expected 'read-only', got '$SESSION_SANDBOX'"
+  fi
+
+  if [ "$SESSION_WORKFLOW" = "codex-leads" ]; then
+    pass "load_session_state: workflow=codex-leads"
+  else
+    fail "load_session_state workflow" "Expected 'codex-leads', got '$SESSION_WORKFLOW'"
+  fi
+
+  # Test 4: Load non-existent task → return 1
+  local load_exit2=0
+  codex_load_session_state "nonexistent-task" > /dev/null 2>&1 || load_exit2=$?
+  if [ "$load_exit2" -ne 0 ]; then
+    pass "load_session_state: non-existent → error"
+  else
+    fail "load_session_state nonexistent" "Expected non-zero exit, got $load_exit2"
+  fi
+
+  # Test 5: Save with empty thread_id (bash mode)
+  codex_save_session_state "test-task-bash" "bash" "" "read-only" "codex-leads" > /dev/null
+  SESSION_MODE="" SESSION_THREAD_ID="" SESSION_SANDBOX="" SESSION_WORKFLOW=""
+  codex_load_session_state "test-task-bash" > /dev/null
+  if [ "$SESSION_MODE" = "bash" ] && [ -z "$SESSION_THREAD_ID" ]; then
+    pass "save/load_session_state: bash mode with empty threadId"
+  else
+    fail "session_state bash mode" "mode='$SESSION_MODE', threadId='$SESSION_THREAD_ID'"
+  fi
+
+  # Cleanup
+  rm -rf "$test_tmp"
+  CODEX_TMP_DIR="$orig_tmp_dir"
+}
+
+# ==============================================================================
+# Test: codex_diff_tier
+# ==============================================================================
+test_diff_tier() {
+  echo ""
+  echo "=== Testing: codex_diff_tier ==="
+
+  # Test 1: Empty diff → small
+  local result1
+  result1=$(codex_diff_tier "")
+  if [ "$result1" = "small" ]; then
+    pass "diff_tier: empty → small"
+  else
+    fail "diff_tier empty" "Expected 'small', got '$result1'"
+  fi
+
+  # Test 2: Small diff (10 lines) → small
+  local small_diff=""
+  for i in $(seq 1 10); do
+    small_diff="${small_diff}line $i
+"
+  done
+  local result2
+  result2=$(codex_diff_tier "$small_diff")
+  if [ "$result2" = "small" ]; then
+    pass "diff_tier: 10 lines → small"
+  else
+    fail "diff_tier 10 lines" "Expected 'small', got '$result2'"
+  fi
+
+  # Test 3: Exactly 500 lines → small (use seq to generate)
+  local exact500
+  exact500=$(seq 1 500 | tr '\n' '\n')
+  local result3
+  result3=$(codex_diff_tier "$exact500")
+  if [ "$result3" = "small" ]; then
+    pass "diff_tier: 500 lines → small"
+  else
+    fail "diff_tier 500 lines" "Expected 'small', got '$result3'"
+  fi
+
+  # Test 4: 501 lines → medium
+  local medium_diff
+  medium_diff=$(seq 1 501 | tr '\n' '\n')
+  local result4
+  result4=$(codex_diff_tier "$medium_diff")
+  if [ "$result4" = "medium" ]; then
+    pass "diff_tier: 501 lines → medium"
+  else
+    fail "diff_tier 501 lines" "Expected 'medium', got '$result4'"
+  fi
+
+  # Test 5: 2000 lines → medium
+  local exact2000
+  exact2000=$(seq 1 2000 | tr '\n' '\n')
+  local result5
+  result5=$(codex_diff_tier "$exact2000")
+  if [ "$result5" = "medium" ]; then
+    pass "diff_tier: 2000 lines → medium"
+  else
+    fail "diff_tier 2000 lines" "Expected 'medium', got '$result5'"
+  fi
+
+  # Test 6: 2001 lines → large
+  local large_diff
+  large_diff=$(seq 1 2001 | tr '\n' '\n')
+  local result6
+  result6=$(codex_diff_tier "$large_diff")
+  if [ "$result6" = "large" ]; then
+    pass "diff_tier: 2001 lines → large"
+  else
+    fail "diff_tier 2001 lines" "Expected 'large', got '$result6'"
+  fi
+}
+
+# ==============================================================================
+# Test: Session state isolation (task_id scoping)
+# ==============================================================================
+test_session_state_isolation() {
+  echo ""
+  echo "=== Testing: Session state isolation ==="
+
+  # Save original tmp dir
+  local orig_tmp_dir="${CODEX_TMP_DIR:-}"
+  local test_tmp=".test-tmp-isolation-$$"
+  CODEX_TMP_DIR="$test_tmp"
+  rm -rf "$test_tmp"
+
+  # Save two different sessions
+  codex_save_session_state "task-A" "mcp" "thread-A" "read-only" "codex-leads" > /dev/null
+  codex_save_session_state "task-B" "bash" "" "workspace-write" "claude-leads" > /dev/null
+
+  # Load task-A and verify
+  SESSION_MODE="" SESSION_THREAD_ID="" SESSION_SANDBOX="" SESSION_WORKFLOW=""
+  codex_load_session_state "task-A" > /dev/null
+  local mode_a="$SESSION_MODE"
+  local thread_a="$SESSION_THREAD_ID"
+
+  # Load task-B and verify
+  SESSION_MODE="" SESSION_THREAD_ID="" SESSION_SANDBOX="" SESSION_WORKFLOW=""
+  codex_load_session_state "task-B" > /dev/null
+  local mode_b="$SESSION_MODE"
+  local thread_b="$SESSION_THREAD_ID"
+
+  # Verify isolation
+  if [ "$mode_a" = "mcp" ] && [ "$thread_a" = "thread-A" ]; then
+    pass "session_isolation: task-A has correct state"
+  else
+    fail "session_isolation task-A" "mode='$mode_a', threadId='$thread_a'"
+  fi
+
+  if [ "$mode_b" = "bash" ] && [ -z "$thread_b" ]; then
+    pass "session_isolation: task-B has correct state"
+  else
+    fail "session_isolation task-B" "mode='$mode_b', threadId='$thread_b'"
+  fi
+
+  # Verify files are separate
+  local tmp_abs
+  tmp_abs=$(codex_ensure_tmp_dir)
+  if [ -f "${tmp_abs}/codex-session-task-A.json" ] && [ -f "${tmp_abs}/codex-session-task-B.json" ]; then
+    pass "session_isolation: separate files per task_id"
+  else
+    fail "session_isolation files" "Expected separate files for task-A and task-B"
+  fi
+
+  # Cleanup
+  rm -rf "$test_tmp"
+  CODEX_TMP_DIR="$orig_tmp_dir"
+}
+
+# ==============================================================================
+# Test: codex_sanitize_task_id / codex_json_escape
+# ==============================================================================
+test_sanitize_and_escape() {
+  echo ""
+  echo "=== Testing: codex_sanitize_task_id / codex_json_escape ==="
+
+  # Test 1: Normal task_id passes through
+  local result1
+  result1=$(codex_sanitize_task_id "collab-12345-1234567890")
+  if [ "$result1" = "collab-12345-1234567890" ]; then
+    pass "sanitize_task_id: normal id passes through"
+  else
+    fail "sanitize_task_id normal" "Expected 'collab-12345-1234567890', got '$result1'"
+  fi
+
+  # Test 2: Path traversal characters stripped
+  local result2
+  result2=$(codex_sanitize_task_id "../../../etc/passwd")
+  if [ "$result2" = "etcpasswd" ]; then
+    pass "sanitize_task_id: path traversal stripped"
+  else
+    fail "sanitize_task_id traversal" "Expected 'etcpasswd', got '$result2'"
+  fi
+
+  # Test 3: Special characters stripped
+  local result3
+  result3=$(codex_sanitize_task_id 'task "with; spaces & quotes')
+  if [ "$result3" = "taskwithspacesquotes" ]; then
+    pass "sanitize_task_id: special chars stripped"
+  else
+    fail "sanitize_task_id special" "Expected 'taskwithspacesquotes', got '$result3'"
+  fi
+
+  # Test 4: JSON escape quotes
+  local result4
+  result4=$(codex_json_escape 'value "with" quotes')
+  if [ "$result4" = 'value \"with\" quotes' ]; then
+    pass "json_escape: quotes escaped"
+  else
+    fail "json_escape quotes" "Expected escaped quotes, got '$result4'"
+  fi
+
+  # Test 5: JSON escape backslashes
+  local result5
+  result5=$(codex_json_escape 'path\to\file')
+  if [ "$result5" = 'path\\to\\file' ]; then
+    pass "json_escape: backslashes escaped"
+  else
+    fail "json_escape backslash" "Expected escaped backslash, got '$result5'"
+  fi
+}
+
+# ==============================================================================
+# Test: codex_save_thread / codex_load_thread (named threads)
+# ==============================================================================
+test_named_threads() {
+  echo ""
+  echo "=== Testing: codex_save_thread / codex_load_thread ==="
+
+  # Save original tmp dir
+  local orig_tmp_dir="${CODEX_TMP_DIR:-}"
+  local test_tmp=".test-tmp-threads-$$"
+  CODEX_TMP_DIR="$test_tmp"
+  rm -rf "$test_tmp"
+
+  # Create session state first
+  codex_save_session_state "thread-test" "mcp" "thread-main" "read-only" "claude-leads" > /dev/null
+
+  # Test 1: Save threadB
+  local save_exit=0
+  codex_save_thread "thread-test" "threadB" "thread-B-123" || save_exit=$?
+  if [ "$save_exit" -eq 0 ]; then
+    pass "save_thread: threadB saved"
+  else
+    fail "save_thread threadB" "Expected exit 0, got $save_exit"
+  fi
+
+  # Test 2: Load threadB
+  local loaded_b
+  loaded_b=$(codex_load_thread "thread-test" "threadB")
+  if [ "$loaded_b" = "thread-B-123" ]; then
+    pass "load_thread: threadB correct"
+  else
+    fail "load_thread threadB" "Expected 'thread-B-123', got '$loaded_b'"
+  fi
+
+  # Test 3: Save threadC (second thread)
+  codex_save_thread "thread-test" "threadC" "thread-C-456" || true
+
+  # Test 4: Both threads preserved
+  local loaded_b2 loaded_c
+  loaded_b2=$(codex_load_thread "thread-test" "threadB")
+  loaded_c=$(codex_load_thread "thread-test" "threadC")
+  if [ "$loaded_b2" = "thread-B-123" ] && [ "$loaded_c" = "thread-C-456" ]; then
+    pass "save_thread: both threads preserved"
+  else
+    fail "save_thread both" "threadB='$loaded_b2', threadC='$loaded_c'"
+  fi
+
+  # Test 5: Update existing thread
+  codex_save_thread "thread-test" "threadB" "thread-B-updated" || true
+  local loaded_b3
+  loaded_b3=$(codex_load_thread "thread-test" "threadB")
+  if [ "$loaded_b3" = "thread-B-updated" ]; then
+    pass "save_thread: update existing thread"
+  else
+    fail "save_thread update" "Expected 'thread-B-updated', got '$loaded_b3'"
+  fi
+
+  # Test 6: Load from non-existent task
+  local loaded_none
+  loaded_none=$(codex_load_thread "nonexistent-task" "threadB" 2>/dev/null || true)
+  if [ -z "$loaded_none" ]; then
+    pass "load_thread: non-existent task → empty"
+  else
+    fail "load_thread nonexistent" "Expected empty, got '$loaded_none'"
+  fi
+
+  # Test 7: Original session fields still intact after thread saves
+  SESSION_MODE="" SESSION_THREAD_ID="" SESSION_SANDBOX="" SESSION_WORKFLOW=""
+  codex_load_session_state "thread-test" > /dev/null
+  if [ "$SESSION_MODE" = "mcp" ] && [ "$SESSION_THREAD_ID" = "thread-main" ]; then
+    pass "save_thread: does not corrupt session fields"
+  else
+    fail "save_thread corruption" "mode='$SESSION_MODE', threadId='$SESSION_THREAD_ID'"
+  fi
+
+  # Test 8: Re-saving session state preserves named threads
+  codex_save_session_state "thread-test" "mcp" "thread-main" "workspace-write" "claude-leads" > /dev/null
+  local loaded_b_after loaded_c_after
+  loaded_b_after=$(codex_load_thread "thread-test" "threadB")
+  loaded_c_after=$(codex_load_thread "thread-test" "threadC")
+  if [ "$loaded_b_after" = "thread-B-updated" ] && [ "$loaded_c_after" = "thread-C-456" ]; then
+    pass "save_session_state: preserves named threads on re-save"
+  else
+    fail "session re-save threads" "threadB='$loaded_b_after', threadC='$loaded_c_after'"
+  fi
+
+  # Cleanup
+  rm -rf "$test_tmp"
+  CODEX_TMP_DIR="$orig_tmp_dir"
+}
+
+# ==============================================================================
+# Test: Malformed state file recovery
+# ==============================================================================
+test_malformed_state_file() {
+  echo ""
+  echo "=== Testing: Malformed state file recovery ==="
+
+  # Save original tmp dir
+  local orig_tmp_dir="${CODEX_TMP_DIR:-}"
+  local test_tmp=".test-tmp-malformed-$$"
+  CODEX_TMP_DIR="$test_tmp"
+  rm -rf "$test_tmp"
+  mkdir -p "$test_tmp"
+
+  # Test 1: Completely empty file
+  echo -n "" > "$test_tmp/codex-session-empty-task.json"
+  SESSION_MODE="" SESSION_THREAD_ID="" SESSION_SANDBOX="" SESSION_WORKFLOW=""
+  local exit1=0
+  codex_load_session_state "empty-task" > /dev/null 2>&1 || exit1=$?
+  if [ "$exit1" -ne 0 ]; then
+    pass "malformed: empty file → error (missing mode)"
+  else
+    fail "malformed empty" "Expected error for empty file, got success"
+  fi
+
+  # Test 2: Partial JSON (has mode but missing other fields)
+  echo '{"mode": "mcp"}' > "$test_tmp/codex-session-partial-task.json"
+  SESSION_MODE="" SESSION_THREAD_ID="" SESSION_SANDBOX="" SESSION_WORKFLOW=""
+  local exit2=0
+  codex_load_session_state "partial-task" > /dev/null 2>&1 || exit2=$?
+  if [ "$exit2" -eq 0 ] && [ "$SESSION_MODE" = "mcp" ]; then
+    pass "malformed: partial JSON → loads mode, tolerates missing fields"
+  else
+    fail "malformed partial" "Expected success with mode=mcp, got exit=$exit2 mode='$SESSION_MODE'"
+  fi
+
+  # Cleanup
+  rm -rf "$test_tmp"
+  CODEX_TMP_DIR="$orig_tmp_dir"
+}
+
+# ==============================================================================
 # Main
 # ==============================================================================
 main() {
@@ -917,6 +1319,14 @@ main() {
   test_infer_verdict
   test_extract_review_findings
   test_run_review
+
+  # Session state and diff tier tests
+  test_save_load_session_state
+  test_diff_tier
+  test_session_state_isolation
+  test_sanitize_and_escape
+  test_named_threads
+  test_malformed_state_file
 
   # Summary
   echo ""

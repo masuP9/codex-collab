@@ -66,7 +66,9 @@ codex_get_language_directive() {
 # Debug logging (enabled with CODEX_DEBUG=1)
 # Usage: codex_debug "message"
 codex_debug() {
-  [ "${CODEX_DEBUG:-}" = "1" ] && echo "[codex-debug] $*" >&2
+  if [ "${CODEX_DEBUG:-}" = "1" ]; then
+    echo "[codex-debug] $*" >&2
+  fi
 }
 
 # ==============================================================================
@@ -443,6 +445,254 @@ codex_infer_verdict() {
   # Unable to determine - caller should retry or treat as conditional
   echo ""
   return 1
+}
+
+# ==============================================================================
+# Session State Management (for MCP/Bash dual-mode)
+# ==============================================================================
+
+# Sanitize task_id for safe use in filenames (allow only alphanumerics, hyphens, underscores)
+# Usage: safe_id=$(codex_sanitize_task_id "$raw_id")
+codex_sanitize_task_id() {
+  printf '%s' "$1" | tr -cd 'a-zA-Z0-9_-' | head -c 128
+}
+
+# Escape a string for safe JSON embedding (handles quotes, backslashes, newlines)
+# Usage: escaped=$(codex_json_escape "$value")
+codex_json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' '
+}
+
+# Save session state to a JSON file (task_id-scoped for concurrent isolation)
+# Usage: codex_save_session_state "task_id" "mcp|bash" "thread_id" "read-only" "codex-leads"
+# Arguments:
+#   task_id   - Unique task identifier for isolation (sanitized for filename safety)
+#   mode      - Communication mode: "mcp" or "bash"
+#   thread_id - MCP thread ID (empty for bash mode). For claude-leads, use
+#               codex_save_thread() to store named threads (threadB, threadC).
+#   sandbox   - Sandbox mode
+#   workflow  - Workflow type
+# Side effects: Writes to tmp/codex-session-{task_id}.json
+codex_save_session_state() {
+  local task_id
+  task_id=$(codex_sanitize_task_id "$1")
+  local mode="$2"
+  local thread_id="${3:-}"
+  local sandbox="${4:-read-only}"
+  local workflow="${5:-codex-leads}"
+
+  if [ -z "$task_id" ]; then
+    codex_debug "save_session_state: empty task_id after sanitization"
+    return 1
+  fi
+
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+  local state_file="${tmp_dir}/codex-session-${task_id}.json"
+
+  local updated_at
+  updated_at=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
+
+  # Escape values for JSON safety
+  local esc_thread_id esc_sandbox esc_workflow
+  esc_thread_id=$(codex_json_escape "$thread_id")
+  esc_sandbox=$(codex_json_escape "$sandbox")
+  esc_workflow=$(codex_json_escape "$workflow")
+
+  # Preserve existing threads block if state file already exists
+  local existing_threads_block="{}"
+  if [ -f "$state_file" ]; then
+    local threads_content
+    threads_content=$(sed -n '/"threads":/,/}/{ /"threads":/d; /}/d; p; }' "$state_file" | grep -v '^$' || true)
+    if [ -n "$threads_content" ]; then
+      existing_threads_block="{
+${threads_content}
+  }"
+    fi
+  fi
+
+  cat > "$state_file" << EOJSON
+{
+  "mode": "${mode}",
+  "threadId": "${esc_thread_id}",
+  "threads": ${existing_threads_block},
+  "sandbox": "${esc_sandbox}",
+  "workflow": "${esc_workflow}",
+  "taskId": "${task_id}",
+  "updatedAt": "${updated_at}"
+}
+EOJSON
+
+  codex_debug "save_session_state: saved to $state_file (mode=$mode, threadId=$thread_id)"
+  echo "$state_file"
+}
+
+# Save a named thread to session state (for multi-thread topology, e.g., claude-leads Thread B/C)
+# Usage: codex_save_thread "task_id" "threadB" "thread-id-value"
+codex_save_thread() {
+  local task_id
+  task_id=$(codex_sanitize_task_id "$1")
+  local thread_name="$2"
+  local thread_value="$3"
+
+  if [ -z "$task_id" ]; then
+    codex_debug "save_thread: empty task_id after sanitization"
+    return 1
+  fi
+
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+  local state_file="${tmp_dir}/codex-session-${task_id}.json"
+
+  if [ ! -f "$state_file" ]; then
+    codex_debug "save_thread: state file not found: $state_file"
+    return 1
+  fi
+
+  # Read current threads block, add/update the named thread
+  local esc_value
+  esc_value=$(codex_json_escape "$thread_value")
+  local esc_name
+  esc_name=$(codex_json_escape "$thread_name")
+
+  # Simple approach: read file, replace threads block
+  # Extract existing threads content (between "threads": { and })
+  local existing_threads
+  existing_threads=$(sed -n '/"threads":/,/}/{ /"threads":/d; /}/d; p; }' "$state_file" | grep -v '^$' || true)
+
+  # Build new threads block
+  local new_threads=""
+  if [ -n "$existing_threads" ]; then
+    # Remove existing entry for this thread name if present, and trailing comma
+    local filtered
+    filtered=$(echo "$existing_threads" | grep -v "\"${esc_name}\"" || true)
+    if [ -n "$filtered" ]; then
+      # Ensure trailing comma on existing entries
+      new_threads=$(echo "$filtered" | sed 's/[[:space:]]*$//' | sed '$ s/,*$/,/')
+      new_threads="${new_threads}
+    \"${esc_name}\": \"${esc_value}\""
+    else
+      new_threads="    \"${esc_name}\": \"${esc_value}\""
+    fi
+  else
+    new_threads="    \"${esc_name}\": \"${esc_value}\""
+  fi
+
+  # Rebuild file with updated threads
+  local updated_at
+  updated_at=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
+
+  local mode sandbox workflow threadId
+  mode=$(grep '"mode"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  threadId=$(grep '"threadId"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  sandbox=$(grep '"sandbox"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  workflow=$(grep '"workflow"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+
+  cat > "$state_file" << EOJSON
+{
+  "mode": "${mode}",
+  "threadId": "${threadId}",
+  "threads": {
+${new_threads}
+  },
+  "sandbox": "${sandbox}",
+  "workflow": "${workflow}",
+  "taskId": "${task_id}",
+  "updatedAt": "${updated_at}"
+}
+EOJSON
+
+  codex_debug "save_thread: saved ${thread_name}=${thread_value} to $state_file"
+}
+
+# Load a named thread from session state
+# Usage: thread_id=$(codex_load_thread "task_id" "threadB")
+codex_load_thread() {
+  local task_id
+  task_id=$(codex_sanitize_task_id "$1")
+  local thread_name="$2"
+
+  if [ -z "$task_id" ]; then
+    return 1
+  fi
+
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+  local state_file="${tmp_dir}/codex-session-${task_id}.json"
+
+  if [ ! -f "$state_file" ]; then
+    return 1
+  fi
+
+  local esc_name
+  esc_name=$(codex_json_escape "$thread_name")
+
+  grep "\"${esc_name}\"" "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true
+}
+
+# Load session state from a JSON file
+# Usage: codex_load_session_state "task_id"
+# Returns: Prints JSON content to stdout
+# Side effects: Sets global variables SESSION_MODE, SESSION_THREAD_ID, SESSION_SANDBOX, SESSION_WORKFLOW
+codex_load_session_state() {
+  local task_id
+  task_id=$(codex_sanitize_task_id "$1")
+
+  if [ -z "$task_id" ]; then
+    codex_debug "load_session_state: empty task_id after sanitization"
+    return 1
+  fi
+
+  local tmp_dir
+  tmp_dir=$(codex_ensure_tmp_dir)
+  local state_file="${tmp_dir}/codex-session-${task_id}.json"
+
+  if [ ! -f "$state_file" ]; then
+    codex_debug "load_session_state: file not found: $state_file"
+    return 1
+  fi
+
+  # Parse JSON fields using grep/sed (no jq dependency)
+  # Guards with || true to prevent set -e failures on malformed files
+  SESSION_MODE=$(grep '"mode"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  SESSION_THREAD_ID=$(grep '"threadId"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  SESSION_SANDBOX=$(grep '"sandbox"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  SESSION_WORKFLOW=$(grep '"workflow"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+
+  # Validate minimum required fields
+  if [ -z "$SESSION_MODE" ]; then
+    codex_debug "load_session_state: missing 'mode' field in $state_file"
+    return 1
+  fi
+
+  codex_debug "load_session_state: loaded from $state_file (mode=$SESSION_MODE, threadId=$SESSION_THREAD_ID)"
+  cat "$state_file"
+}
+
+# ==============================================================================
+# Diff Size Tiering
+# ==============================================================================
+
+# Determine diff tier based on line count
+# Usage: tier=$(codex_diff_tier "$diff_content")
+# Returns: "small" (<=500 lines), "medium" (501-2000), or "large" (>2000)
+codex_diff_tier() {
+  local diff_content="$1"
+
+  local line_count
+  if [ -z "$diff_content" ]; then
+    line_count=0
+  else
+    line_count=$(printf '%s\n' "$diff_content" | wc -l)
+  fi
+
+  if [ "$line_count" -le 500 ]; then
+    echo "small"
+  elif [ "$line_count" -le 2000 ]; then
+    echo "medium"
+  else
+    echo "large"
+  fi
 }
 
 # ==============================================================================

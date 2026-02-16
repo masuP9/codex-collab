@@ -21,15 +21,18 @@ This skill enables effective collaboration between two AI systems with **two wor
 
 デフォルト（`auto`）は常に **Codex-Leads** を選択。`claude-leads` は `workflow: claude-leads` を明示指定した場合のみ有効。
 
-**通信方式**: すべての Codex 呼び出しは `codex exec`（ステートレス実行）を使用。プロンプトを stdin から受け取り、結果を stdout に出力してブロッキング終了します。`codex_run_exec()` が入出力、ANSI 除去、exit code ハンドリングを統合処理します。
+**通信方式**: MCP primary + Bash fallback のデュアルモード。
+- **MCP mode** (`mcp__codex__codex`/`codex-reply`): ステートフルな会話（threadId で文脈保持）。ANSI 除去不要、ファイル I/O 不要。
+- **Bash mode** (`codex exec`/`codex review`): ステートレス実行。`codex_run_exec()` が入出力、ANSI 除去、exit code ハンドリングを統合処理。MCP 未設定時の自動フォールバック。
 
 ## Prerequisites
 
 Before starting collaboration:
-1. Verify `codex` CLI is available: `which codex` or `codex --version`
-2. Verify `codex exec` works: `codex exec -s read-only - <<< "test"`
-3. Check for project settings in `.claude/codex-collab.local.md`
-4. If Codex CLI unavailable, inform user and proceed with Claude-only mode
+1. **MCP tools check** (primary): Try `mcp__codex__codex` with a lightweight probe. If available → MCP mode.
+2. **CLI fallback**: If MCP unavailable, verify `codex` CLI is available: `which codex` or `codex --version`
+3. Verify `codex exec` works (Bash mode): `codex exec -s read-only - <<< "test"`
+4. Check for project settings in `.claude/codex-collab.local.md`
+5. If neither MCP nor CLI available, inform user and proceed with Claude-only mode
 
 ## Workflow: Review Type (Default)
 
@@ -50,7 +53,13 @@ When receiving a task for collaboration:
 
 ### Phase 2: Request Plan from Codex
 
-1. Prepare prompt and run codex exec:
+**MCP mode (primary):**
+```
+mcp__codex__codex(prompt: "[planning prompt]", sandbox: "read-only")
+→ Returns response + threadId (saved for Phase 4)
+```
+
+**Bash mode (fallback):**
 ```bash
 source scripts/codex-helpers.sh
 PROMPT_FILE=$(codex_write_prompt "$PLANNING_PROMPT" "plan")
@@ -58,7 +67,7 @@ OUTPUT_FILE="$(codex_tmp_path 'codex-plan-output.md')"
 codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only"
 ```
 
-2. Read results from output file
+Read results from tool response (MCP) or output file (Bash).
 
 ### Phase 3: Implement Based on Plan
 
@@ -80,22 +89,28 @@ git reset -- tmp/ 2>/dev/null || true
 ```
 > **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method.
 
-2. Run review using `codex review` (primary) with `codex exec` fallback:
+2. Run review (mode-dependent):
+
+**MCP mode (primary):**
+```
+# Get diff, embed in prompt, continue same thread from Phase 2
+mcp__codex__codex-reply(threadId: "[from Phase 2]", prompt: "[review prompt with diff]")
+→ Parse verdict directly from response (no codex_infer_verdict needed)
+```
+
+**Bash mode (fallback):**
 ```bash
 source scripts/codex-helpers.sh
 REVIEW_OUTPUT="$(codex_tmp_path 'codex-review-output.md')"
-# Primary: codex review --uncommitted (auto-collects diff)
-# Note: --uncommitted does not accept custom prompt; instructions go in exec fallback
 codex_run_review "$REVIEW_OUTPUT" "$MODEL" || REVIEW_EXIT=$?
 
-# Fallback: codex exec with diff file reference
 if [ "${REVIEW_EXIT:-0}" -ne 0 ]; then
   REVIEW_PROMPT_FILE=$(codex_write_prompt "$REVIEW_PROMPT" "review")
   codex_run_exec "$REVIEW_PROMPT_FILE" "$REVIEW_OUTPUT" "read-only"
 fi
 ```
 
-3. Parse verdict and findings:
+3. Parse verdict and findings (Bash mode):
 ```bash
 RESPONSE=$(cat "$REVIEW_OUTPUT")
 VERDICT=$(codex_infer_verdict "$RESPONSE") || true
@@ -203,9 +218,23 @@ Accept review as "Pass" only when:
 
 ## Running Codex
 
-### codex exec パターン
+### MCP パターン（推奨）
 
-すべての Codex 呼び出しは `codex exec`（ステートレス実行）を使用します:
+MCP ツールが利用可能な場合、ステートフルな通信を使用:
+
+```
+# 新規セッション開始
+mcp__codex__codex(prompt: "...", sandbox: "read-only")
+→ Returns response + threadId
+
+# 同一スレッドで継続
+mcp__codex__codex-reply(threadId: "...", prompt: "...")
+→ Returns response (conversation context preserved)
+```
+
+### codex exec パターン（フォールバック）
+
+MCP が利用できない場合、`codex exec`（ステートレス実行）を使用:
 
 ```bash
 # ヘルパー関数を使用（推奨）
@@ -228,13 +257,13 @@ codex exec -s read-only -m o4-mini - < prompt.txt 2>&1 | tee output.md
 
 ### Important Notes
 
-- Each `codex exec` call is stateless (no conversation history between calls)
-- Include all necessary context in each prompt
+- **MCP mode**: Stateful sessions via threadId. Clean text output. No file I/O for prompts. Auto-detected in Step 0a.
+- **Bash mode**: Each `codex exec` call is stateless (no conversation history between calls). Include all necessary context in each prompt.
 - Use `-s read-only` for planning/review tasks (Codex won't modify files)
 - Use `-s workspace-write` for implementation tasks (claude-leads workflow)
-- Output may contain ANSI escape codes; use `codex_strip_ansi()` or `codex_run_exec()` to clean
-- **Stdin input**: Use redirect format (`codex exec - < file`) for reliable input
-- **Timeout**: Bash tool has max 600s (10 minutes) timeout
+- Output may contain ANSI escape codes (Bash mode only); use `codex_strip_ansi()` or `codex_run_exec()` to clean
+- **Stdin input** (Bash mode): Use redirect format (`codex exec - < file`) for reliable input
+- **Timeout**: Bash tool has max 600s (10 minutes) timeout. MCP mode timeout is managed by MCP framework.
 - **Background agents**: Background subagents (`run_in_background: true`) require pre-approved Bash permissions in `~/.claude/settings.json` or `.claude/settings.json`. Without pre-approval, Bash tool calls are auto-denied because permission prompts are unavailable in background mode.
 
 ## Error Handling

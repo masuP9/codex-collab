@@ -2,7 +2,7 @@
 name: collab-codex
 description: Start a collaborative task with Codex (default: codex-leads workflow)
 argument-hint: [task description]
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
 # Codex Collaboration Workflow
@@ -14,7 +14,7 @@ Execute a collaborative workflow between Claude Code and Codex CLI.
 - **claude-leads** (新規): Claude が計画・レビュー、Codex が実装（workspace-write sandbox）
 - **auto** (default): 常に codex-leads を選択（明示的に `claude-leads` を指定した場合のみ Claude 主導）
 
-**Architecture**: `codex exec` によるステートレス実行。Bash tool 経由で呼び出し、stdout を直接取得。
+**Architecture**: MCP primary + Bash fallback のデュアルモード。MCP (`mcp__codex__codex`/`codex-reply`) はステートフルな会話を提供。MCP 未設定時は `codex exec` (Bash) にフォールバック。
 
 ## Task
 
@@ -53,6 +53,52 @@ fi
 
 > **Note:** Helper functions are required for this workflow. The loader tries multiple locations: `CLAUDE_PLUGIN_ROOT`, Claude plugin cache, and current directory.
 > **Important:** The `CODEX_SKILL_CONTEXT=1` export is required for the PreToolUse hook to recognize this as skill context and allow Bash execution without blocking.
+
+### Step 0a: Determine Communication Mode (MCP vs Bash)
+
+Determine whether to use MCP tools or Bash CLI for Codex communication.
+
+**1. Probe MCP availability:**
+
+Call `mcp__codex__codex` with a lightweight ping:
+```
+mcp__codex__codex(prompt: "ping", sandbox: "read-only")
+```
+
+- **Success** → MCP mode. Save the returned `threadId` to session state.
+- **Failure** (tool not available, permission denied, error) → Bash mode (従来動作).
+
+**2. Save session state:**
+
+```bash
+export CODEX_SKILL_CONTEXT=1
+
+# Source helpers
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+if [ -z "$HELPERS" ] || [ ! -f "$HELPERS" ]; then
+  HELPERS="$(pwd)/scripts/codex-helpers.sh"
+fi
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+TASK_ID="collab-$$-$(date +%s)"
+# MODE and THREAD_ID are set by the probe result above
+# MODE="mcp" or "bash", THREAD_ID from probe response (empty for bash)
+# Note: Save with defaults here. Workflow/sandbox are updated after Step 1 loads settings.
+codex_save_session_state "$TASK_ID" "$MODE" "$THREAD_ID"
+echo "Communication mode: $MODE (task_id: $TASK_ID)"
+```
+
+**MCP Fallback Strategy (error-type based):**
+- `thread_not_found` / `auth_error` / `tool_not_available` → Switch to Bash fallback
+- `timeout` / `transient_error` → Retry MCP (max 2 retries)
+- 3 consecutive failures → Switch to Bash mode
+
+> **Note:** MCP mode provides: stateful conversation (threadId), clean text (no ANSI), no file I/O for prompts, direct response reading (no bash parsing). Bash mode preserves all existing functionality as fallback.
 
 ### Step 1: Load Settings
 
@@ -112,6 +158,16 @@ Report the selected workflow to the user:
 Workflow: codex-leads (auto-selected, default)
 ```
 
+**Update session state with resolved settings:**
+
+After settings and workflow are determined, update the session state file (Step 0a saved only mode/threadId with defaults):
+
+```bash
+export CODEX_SKILL_CONTEXT=1
+# Re-save with resolved settings (TASK_ID and MODE/THREAD_ID from Step 0a)
+codex_save_session_state "$TASK_ID" "$MODE" "$THREAD_ID" "${SANDBOX_SETTING:-read-only}" "${WORKFLOW:-codex-leads}"
+```
+
 **After workflow is determined:**
 - If `codex-leads` → Continue to **Step 2** (existing workflow)
 - If `claude-leads` → Jump to **Step 2c** (Claude-led workflow)
@@ -149,6 +205,29 @@ Then use TaskUpdate to set status to `in_progress`.
    - description: "Request plan, wait for completion, process response"
    - activeForm: "Getting plan from Codex"
 3. Use TaskUpdate to set status to `in_progress`
+
+**Choose path based on communication mode (Step 0a):**
+
+#### MCP Path (primary)
+
+Call `mcp__codex__codex` to start a new stateful session:
+
+```
+mcp__codex__codex(
+  prompt: "[Planning prompt - same content as Bash path's heredoc below]",
+  developer-instructions: "[Language directive, e.g., '日本語で回答してください。...']",
+  sandbox: "read-only",
+  model: "[model setting if specified]",
+  cwd: "[project directory]"
+)
+```
+
+- The returned `threadId` is saved for subsequent steps (Step 5a, 7, 8)
+- Update session state with the new threadId
+- Response is read directly from the tool result (no file I/O, no ANSI stripping needed)
+- If MCP call fails → fall through to Bash path below
+
+#### Bash Path (fallback)
 
 **1. Prepare prompt file:**
 ```bash
@@ -290,7 +369,28 @@ If Codex requests clarification or wants to continue the exchange:
 - Increment round counter
 - Check if round < exchange.max_iterations (default: 3)
 
-**2. Prepare follow-up prompt with history:**
+**Choose path based on communication mode:**
+
+#### MCP Path (primary) — Simplified multi-turn
+
+MCP mode eliminates the need for history reconstruction. The thread retains full conversation context.
+
+```
+mcp__codex__codex-reply(
+  threadId: "[threadId from Step 3]",
+  prompt: "[Your response to Codex's question/request]
+
+Please respond with next_action: stop when the plan is complete."
+)
+```
+
+- **No history management needed**: The thread preserves all prior context
+- `exchange.history_mode: summarize` logic is unnecessary in MCP mode
+- Simply send the new message; Codex sees the full conversation
+- Parse response directly from tool result
+- Return to Step 5
+
+#### Bash Path (fallback) — History reconstruction
 
 For each round, include conversation history in the prompt. Since `codex exec` is stateless, context must be explicitly provided:
 
@@ -317,10 +417,11 @@ Claude: [Your current response to Codex's question/request]
 Please respond with next_action: stop when exchange is complete.
 ```
 
-**3. Send follow-up to Codex:**
 - Write updated prompt to file
 - Run `codex exec` with the updated prompt
 - Return to Step 5
+
+#### Common for both paths
 
 **4. User confirmation (based on exchange.user_confirm setting):**
 - `never`: Fully automatic exchange
@@ -362,6 +463,79 @@ git add -A
 ```
 > **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method.
 > This is staging only, not a commit. Run `git reset` after review to unstage if needed.
+
+**Choose path based on communication mode:**
+
+#### MCP Path (primary) — Review via thread continuation
+
+MCP mode does not expose `codex review --uncommitted`, so embed the diff in the prompt.
+
+**1. Get diff and determine tier:**
+```bash
+export CODEX_SKILL_CONTEXT=1
+
+# Source helpers
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+if [ -z "$HELPERS" ] || [ ! -f "$HELPERS" ]; then
+  HELPERS="$(pwd)/scripts/codex-helpers.sh"
+fi
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+DIFF_CONTENT=$(git diff --cached)
+DIFF_TIER=$(codex_diff_tier "$DIFF_CONTENT")
+DIFF_STAT=$(git diff --cached --stat)
+
+echo "Diff tier: $DIFF_TIER ($(echo "$DIFF_CONTENT" | wc -l) lines)"
+echo "$DIFF_STAT"
+```
+
+**2. Build review prompt based on diff tier:**
+- **small** (~500 lines以下): diff 全文を埋め込み
+- **medium** (~500-2000 lines): `--stat` + 重要ファイルのみ hunk 全文
+- **large** (2000 lines超): `--stat` + 変更サマリ。Bash fallback (`codex review --uncommitted`) を推奨
+
+**3. Send review request via MCP:**
+
+```
+mcp__codex__codex-reply(
+  threadId: "[threadId from Step 3]",
+  prompt: "Review the following implementation changes.
+
+## Diff Statistics
+[git diff --cached --stat output]
+
+## Changes
+[diff content based on tier]
+
+## Review Request
+1. Does implementation match the plan?
+2. Code quality and maintainability?
+3. Bugs and issues? Mark with [P1] (critical), [P2] (high), [P3] (medium), [P4] (low).
+4. Security vulnerabilities?
+5. Verdict: PASS / CONDITIONAL / FAIL
+
+Include a metadata block at the end:
+---
+verdict: pass / conditional / fail
+findings:
+  - severity: low / medium / high
+    message: description
+---"
+)
+```
+
+- Codex has the plan context from the same thread (no need to resend plan)
+- Verdict is parsed directly from the response (no `codex_infer_verdict()` needed)
+- If MCP fails → fall through to Bash path
+
+> **Note:** For large diffs, prefer Bash fallback with `codex review --uncommitted` which handles diff collection natively.
+
+#### Bash Path (fallback)
 
 **1. Run review using `codex review` (primary) with `codex exec` fallback:**
 
@@ -477,6 +651,31 @@ Claude must NOT give up after a single review response. The review loop should c
 - Max iterations reached (default: 5)
 - User explicitly requests to stop
 
+**Choose path based on communication mode:**
+
+#### MCP Path — Direct response parsing
+
+In MCP mode, Claude reads the review response directly from the tool result:
+
+- Parse verdict directly from the response text (look for `verdict: pass/conditional/fail` in metadata block, or `[P1]-[P4]` markers)
+- No `codex_infer_verdict()` bash function needed — Claude can reason about the response directly
+- For re-review after fixes:
+  ```
+  mcp__codex__codex-reply(
+    threadId: "[same threadId]",
+    prompt: "I've applied the following fixes based on your review:
+  [description of fixes]
+
+  Updated diff:
+  [new git diff --cached output]
+
+  Please re-review. Provide verdict: pass / conditional / fail."
+  )
+  ```
+- Thread retains previous review context, so Codex can compare against prior findings
+
+#### Bash Path — File-based parsing
+
 **8.0 Parse verdict from response:**
 
 Use `codex_infer_verdict()` for unified verdict parsing:
@@ -513,6 +712,8 @@ if [ -n "$FINDINGS" ]; then
   echo "$FINDINGS"
 fi
 ```
+
+#### Common handling for both paths
 
 **8.1 If verdict is missing or unclear:**
 
@@ -574,13 +775,18 @@ WHILE review_round < max_rounds:
   review_round++
 
   1. Stage changes: git add -A
-  2. Run review:
-     a. Try codex_run_review() (primary)
-     b. If non-zero exit → fallback to codex_run_exec() with diff
-  3. Parse verdict via codex_infer_verdict()
-  4. Extract findings via codex_extract_review_findings()
+  2. Run review (mode-dependent):
+     MCP mode:
+       a. Get diff, determine tier (codex_diff_tier)
+       b. mcp__codex__codex-reply(threadId, review_prompt_with_diff)
+       c. Parse verdict directly from response
+     Bash mode:
+       a. Try codex_run_review() (primary)
+       b. If non-zero exit → fallback to codex_run_exec() with diff
+       c. Parse verdict via codex_infer_verdict()
+       d. Extract findings via codex_extract_review_findings()
 
-  IF fallback path AND response contains "Unable to access diff file":
+  IF Bash fallback path AND response contains "Unable to access diff file":
     Rebuild prompt with diff content embedded
     review_round--
     CONTINUE
@@ -589,6 +795,7 @@ WHILE review_round < max_rounds:
     verdict_retries++
     IF verdict_retries < max_verdict_retries:
       Send follow-up asking for explicit verdict
+      (MCP: codex-reply, Bash: new codex exec)
       CONTINUE
     ELSE:
       verdict = "conditional" (fallback)
@@ -694,6 +901,29 @@ Based on the analysis, create a detailed implementation plan that includes:
 > Skip this step if `consult_codex: false`.
 
 **Purpose:** Get Codex's perspective on the plan before implementation.
+
+**Choose path based on communication mode:**
+
+#### MCP Path (primary)
+
+Start a new MCP session for consultation (read-only sandbox):
+
+```
+mcp__codex__codex(
+  prompt: "[Consultation prompt - same content as Bash path below]",
+  developer-instructions: "[Language directive]",
+  sandbox: "read-only",
+  model: "[model setting if specified]",
+  cwd: "[project directory]"
+)
+```
+
+- This creates a separate thread (Thread B) from the codex-leads thread
+- Save the threadId as named thread: `codex_save_thread "$TASK_ID" "threadB" "$THREAD_B_ID"`
+- Parse response directly from tool result
+- If MCP fails → fall through to Bash path
+
+#### Bash Path (fallback)
 
 **1. Prepare consultation prompt:**
 
@@ -854,6 +1084,29 @@ echo "Safety checkpoint created (WIP commit)"
    - activeForm: "Codex implementing"
 3. Use TaskUpdate to set status to `in_progress`
 
+**Choose path based on communication mode:**
+
+#### MCP Path (primary)
+
+Start a new MCP session for implementation (workspace-write sandbox — different from read-only consultation):
+
+```
+mcp__codex__codex(
+  prompt: "[Implementation prompt - same content as Bash path below]",
+  developer-instructions: "[Language directive]",
+  sandbox: "workspace-write",
+  model: "[model setting if specified]",
+  cwd: "[project directory]"
+)
+```
+
+- This creates Thread C (separate from consultation Thread B due to different sandbox)
+- Save the threadId as named thread: `codex_save_thread "$TASK_ID" "threadC" "$THREAD_C_ID"`
+- Response describes what was implemented
+- If MCP fails → fall through to Bash path
+
+#### Bash Path (fallback)
+
 **1. Prepare implementation prompt:**
 
 ```bash
@@ -992,7 +1245,13 @@ WHILE review_round < max_rounds:
   1. Claude reviews changes (git diff + Read)
   2. IF issues found:
      a. Prepare fix instructions for Codex
-     b. Run codex exec with fix prompt (workspace-write sandbox)
+     b. Send fix request (mode-dependent):
+        MCP mode:
+          threadC=$(codex_load_thread "$TASK_ID" "threadC")
+          mcp__codex__codex-reply(threadId: threadC, prompt: "[fix instructions]")
+          (Thread C continues — Codex has implementation context)
+        Bash mode:
+          Run codex exec with fix prompt (workspace-write sandbox)
      c. CONTINUE (re-review)
   3. IF no issues:
      BREAK → Success
@@ -1082,19 +1341,27 @@ If timeout (`codex.wait_timeout`, default 180s) without completion:
 
 ## Notes
 
-- **Architecture**: All Codex communication uses `codex exec` (stateless execution) via Bash tool. No tmux/wt/inline mode branching needed.
+- **Architecture**: MCP primary + Bash fallback のデュアルモード。
+  - **MCP mode** (`mcp__codex__codex`/`codex-reply`): ステートフルな会話（threadId で文脈保持）。ANSI 除去不要、ファイル I/O 不要、直接レスポンス読み取り。
+  - **Bash mode** (`codex exec`/`codex review`): ステートレス実行（従来動作）。MCP 未設定時の自動フォールバック。
+- **Thread topology** (MCP mode):
+  - codex-leads: Thread A（計画 → exchange → レビュー、全ステップで共有）
+  - claude-leads: Thread B（壁打ち、read-only）、Thread C（実装 → 修正、workspace-write）
+- **Communication mode detection**: Step 0a で `mcp__codex__codex` の軽量 probe を実行。成功 → MCP、失敗 → Bash。
+- **Session state**: `tmp/codex-session-{task_id}.json` にモード、threadId、threads（名前付きスレッド）、sandbox 等を保存。Step 0a で mode/threadId を初期保存、Step 1a で settings 反映後に更新。claude-leads では `codex_save_thread()` で Thread B/C を個別に保存。compaction 復旧時に読み込み。
+- **Diff tiering** (MCP review): small（~500行）→全文、medium（~2000行）→stat+重要ファイル、large（2000行超）→stat+サマリ（Bash推奨）。
 - **Workflow modes**:
   - **codex-leads**: Traditional workflow. Codex plans/reviews, Claude implements. Uses `read-only` sandbox by default.
   - **claude-leads**: New workflow. Claude plans/reviews, Codex implements. Uses `workspace-write` sandbox by default.
   - **auto**: 常に `codex-leads` を選択。`claude-leads` は明示的に `workflow: claude-leads` を指定した場合のみ有効。
-- **Stateless context**: Since `codex exec` is stateless, all necessary context must be included in each prompt. For multi-turn exchanges, include conversation history (recent 2 rounds full text + older rounds summarized).
+- **Stateless context** (Bash mode only): Since `codex exec` is stateless, all necessary context must be included in each prompt. For multi-turn exchanges, include conversation history (recent 2 rounds full text + older rounds summarized). MCP mode ではスレッドが文脈を保持するため不要。
 - Output files are saved in project's `tmp/` directory. This directory is excluded by `.gitignore`.
 - **Important**: Stage changes with `git add -A` before review so Codex can see new files
 - **Multi-turn exchange** (codex-leads only): Use `next_action: continue|stop` to control exchange flow.
 - **Review iteration** (codex-leads): Continue iterating until `pass` or max iterations (default: 5).
 - **Claude-led review** (claude-leads): Claude reviews via `git diff` + Read. Max iterations controlled by `claude_leads.review.max_iterations` (default: 3).
 - **Safety checkpoint** (claude-leads): Before Codex implementation, save state via git stash (default).
-- **Timeout configuration**: `codex.wait_timeout` (default: 180s, max: 600s) controls how long to wait for Codex. Set Bash tool's `timeout` parameter to `min(wait_timeout + 60, 600) * 1000` milliseconds.
+- **Timeout configuration**: `codex.wait_timeout` (default: 180s, max: 600s) controls how long to wait for Codex. Set Bash tool's `timeout` parameter to `min(wait_timeout + 60, 600) * 1000` milliseconds. MCP mode ではタイムアウトは MCP フレームワークが管理。
 - **Background execution**: For long-running `codex exec` calls, use `run_in_background: true` on the Bash tool.
 
 ## Compact Recovery
@@ -1103,7 +1370,34 @@ If you've been compacted during this workflow:
 
 1. Run `TaskList` to see current progress
 2. Find the task with status `in_progress`
-3. Resume from the current step
+3. **Check session state** for communication mode recovery:
+
+```bash
+export CODEX_SKILL_CONTEXT=1
+
+# Source helpers
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+if [ -z "$HELPERS" ] || [ ! -f "$HELPERS" ]; then
+  HELPERS="$(pwd)/scripts/codex-helpers.sh"
+fi
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+# Find the most recent session state
+ls -t tmp/codex-session-*.json 2>/dev/null | head -3
+```
+
+4. **MCP mode recovery:** If session state shows `mode: mcp` with a valid `threadId`:
+   - Use `mcp__codex__codex-reply(threadId, "Resuming after context compaction...")` to continue
+   - For claude-leads: check `threads.threadB` / `threads.threadC` for the appropriate thread
+   - Use `codex_load_thread "$TASK_ID" "threadB"` or `codex_load_thread "$TASK_ID" "threadC"`
+   - If threadId is invalid (thread_not_found) → fall back to Bash mode
+5. **Bash mode recovery:** Resume from the current step using existing patterns
+6. Resume from the current step
 
 **Task to Step mapping (codex-leads):**
 | Task | Resume at |
@@ -1123,7 +1417,18 @@ If you've been compacted during this workflow:
 | "Codex implements changes" | Step 7c |
 | "Review Codex's implementation" | Step 8c |
 
-**Recovery example:**
+**Recovery example (MCP mode):**
+```
+TaskList shows:
+- [completed] Analyze task and gather context
+- [in_progress] Get implementation plan from Codex
+
+→ Read tmp/codex-session-*.json for threadId
+→ If threadId exists → mcp__codex__codex-reply(threadId, resume_prompt)
+→ If no threadId → fall back to Bash mode, re-run Codex request
+```
+
+**Recovery example (Bash mode):**
 ```
 TaskList shows:
 - [completed] Analyze task and gather context

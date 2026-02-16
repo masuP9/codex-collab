@@ -2,7 +2,7 @@
 name: devils-advocate
 description: Devil's Advocate methodology to stress-test hypotheses and designs through structured debate
 argument-hint: [proposal] [--mode codex|claude-only] [--max-rounds N]
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
 # Devil's Advocate Review
@@ -251,6 +251,34 @@ Update state file with Blue Team section using Edit tool:
 #### Red Team Phase
 
 **If mode = codex:**
+
+**Choose communication path:**
+
+##### MCP Path (primary)
+
+**Round 1:** Start a new MCP session:
+```
+mcp__codex__codex(
+  prompt: "[Critique prompt - same content as Bash path below]",
+  developer-instructions: "[Language directive]",
+  sandbox: "read-only",
+  cwd: "[project directory]"
+)
+```
+- Save the returned `threadId` for subsequent rounds.
+
+**Round 2+:** Continue the existing thread:
+```
+mcp__codex__codex-reply(
+  threadId: "[threadId from Round 1]",
+  prompt: "[Updated critique prompt with Blue Team's response]"
+)
+```
+- **Key advantage**: No debate history reconstruction needed. The thread retains all prior rounds.
+- Parse critique directly from tool result
+- If MCP fails → fall through to Bash path
+
+##### Bash Path (fallback)
 
 1. Prepare critique request prompt:
 

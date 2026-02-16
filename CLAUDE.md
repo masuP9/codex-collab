@@ -33,13 +33,32 @@ PRを作成する前に、変更内容に応じて以下の **両方のファイ
 }
 ```
 
-## Codex CLI の仕様
+## Codex 通信の仕様
 
-OpenAI Codex CLI と連携する際に知っておくべき仕様:
+OpenAI Codex と連携する際に知っておくべき仕様。**MCP primary + Bash fallback** のデュアルモード。
 
-### codex exec（ステートレス実行）
+### Codex MCP Tools（ステートフル、推奨）
 
-Codex CLI との通信には `codex exec` を使用する。プロンプトを stdin から受け取り、結果を stdout に出力してブロッキング終了する。
+Codex MCP サーバー (`codex mcp-server`) 経由でステートフルなセッション管理が可能。
+
+```
+# 新規セッション開始
+mcp__codex__codex(prompt: "...", sandbox: "read-only")
+→ Returns: response + threadId
+
+# 同一スレッドで継続（会話コンテキスト自動保持）
+mcp__codex__codex-reply(threadId: "...", prompt: "...")
+→ Returns: response
+```
+
+- ステートフル: threadId で会話コンテキスト保持（multi-turn exchange で履歴再構築不要）
+- クリーンテキスト: ANSI 除去不要
+- ファイル I/O 不要: prompt/output の tmp ファイル不要
+- MCP 未設定時は自動的に Bash fallback に切り替え
+
+### codex exec（ステートレス実行、Bash fallback）
+
+MCP が利用できない場合のフォールバック。プロンプトを stdin から受け取り、結果を stdout に出力してブロッキング終了する。
 
 ```sh
 # 基本パターン
@@ -53,9 +72,9 @@ codex exec -s read-only -m o4-mini - < prompt.txt
 - 出力に ANSI エスケープコードが含まれる場合があるため `codex_strip_ansi()` で除去
 - `codex_run_exec()` がファイル入出力、ANSI 除去、exit code ハンドリングを統合処理
 
-### codex review（コードレビュー）
+### codex review（コードレビュー、Bash fallback）
 
-`codex review --uncommitted` はステージ済み/未コミットの差分を自動収集してレビューを行う専用サブコマンド。
+`codex review --uncommitted` はステージ済み/未コミットの差分を自動収集してレビューを行う専用サブコマンド。MCP では利用不可（diff を prompt に埋め込む）。
 
 ```sh
 # 基本パターン
@@ -73,7 +92,7 @@ codex review --uncommitted "セキュリティ脆弱性に注目してレビュ�
 
 - `commands/` - `/collab` などのスラッシュコマンド
 - `scripts/` - 共通ヘルパースクリプト
-- `skills/codex-collaboration/` - スキル定義とリファレンス
+- `skills/codex-collab/` - スキル定義とリファレンス
 - `hooks/` - PreToolUse などのフック
 - `docs/` - プラグインドキュメント（Bash使用ルールなど）
 - `.claude-plugin/plugin.json` - プラグインメタデータ（バージョン含む）
@@ -136,7 +155,7 @@ fi
 
 ### 現在の関数一覧
 
-コア関数（Codex 実行）:
+コア関数（Bash fallback 用の Codex 実行）:
 
 - `codex_run_exec()` - codex exec のラッパー（stdin パイプ、ANSI 除去、出力保存、exit code ハンドリング）
 - `codex_run_review()` - codex review --uncommitted のラッパー（ANSI 除去、出力保存、モデル retry、exit code ハンドリング）
@@ -144,10 +163,20 @@ fi
 - `codex_write_prompt()` - プロンプトを一時ファイルに書き出し
 - `codex_strip_ansi()` - ANSI エスケープコード除去
 
-レビュー解析:
+レビュー解析（Bash fallback 用）:
 
 - `codex_infer_verdict()` - レビューレスポンスから verdict を推定（メタデータ → [P1]-[P4] → findings なし pass）
 - `codex_extract_review_findings()` - レビューレスポンスから findings を抽出
+
+セッション状態管理（MCP/Bash デュアルモード用）:
+
+- `codex_save_session_state()` - セッション状態を JSON ファイルに保存（task_id 単位で分離、値はエスケープ済み）
+- `codex_load_session_state()` - セッション状態を読み込み（MODE, THREAD_ID 等をグローバル変数にセット）
+- `codex_save_thread()` - 名前付きスレッドを保存（claude-leads の Thread B/C 用）
+- `codex_load_thread()` - 名前付きスレッドを読み込み
+- `codex_sanitize_task_id()` - task_id のファイル名安全化（英数字・ハイフン・アンダースコアのみ）
+- `codex_json_escape()` - JSON 値のエスケープ（引用符・バックスラッシュ・改行）
+- `codex_diff_tier()` - diff のサイズに応じてティア判定（small/medium/large）
 
 ユーティリティ関数:
 

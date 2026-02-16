@@ -2,7 +2,7 @@
 name: strong-inference
 description: Apply Strong Inference methodology to investigate problems with competing hypotheses
 argument-hint: [problem description] [--mode codex|claude-only]
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
 # Strong Inference Investigation
@@ -190,6 +190,27 @@ echo "Task ID: $TASK_ID"
 - `$PROBLEM_DESC` - The problem description
 
 **If mode = codex:**
+
+**Choose communication path:**
+
+##### MCP Path (primary)
+
+Probe MCP availability by calling `mcp__codex__codex`:
+
+```
+mcp__codex__codex(
+  prompt: "[Hypothesis prompt - same content as Bash path below]",
+  developer-instructions: "[Language directive]",
+  sandbox: "read-only",
+  cwd: "[project directory]"
+)
+```
+
+- Save the returned `threadId` for Step 7 (review of findings, same thread)
+- Parse hypotheses directly from tool result
+- If MCP fails → fall through to Bash path below
+
+##### Bash Path (fallback)
 
 1. Prepare hypothesis request prompt (complete script that reads from state file):
 
@@ -490,6 +511,26 @@ fi
 - activeForm: "Concluding investigation"
 
 **If mode = codex:**
+
+**Choose communication path:**
+
+##### MCP Path (primary)
+
+If a threadId was saved from Step 3, continue the same thread:
+
+```
+mcp__codex__codex-reply(
+  threadId: "[threadId from Step 3]",
+  prompt: "[Review prompt - same content as Bash path below]"
+)
+```
+
+- Codex retains the hypothesis generation context from the same thread
+- No need to resend the full investigation state
+- Parse review directly from tool result
+- If MCP fails (e.g., thread_not_found) → fall through to Bash path
+
+##### Bash Path (fallback)
 
 Request Codex review of findings:
 

@@ -56,7 +56,7 @@ codex-collab/
 ├── scripts/
 │   └── codex-helpers.sh    # 共通ヘルパー関数
 └── skills/
-    ├── codex-collaboration/
+    ├── codex-collab/
     │   └── references/     # プロトコル定義
     ├── strong-inference/
     │   └── references/     # 仮説テンプレート
@@ -358,7 +358,7 @@ decisions:
 
 ### 関連ファイル
 
-詳細な仕様は `skills/codex-collaboration/references/` にあります：
+詳細な仕様は `skills/codex-collab/references/` にあります：
 
 - `lightweight-metadata.md` - 軽量メタデータプロトコル仕様
 - `planning-prompt.md` - 計画依頼テンプレート
