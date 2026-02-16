@@ -363,7 +363,7 @@ git add -A
 > **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method.
 > This is staging only, not a commit. Run `git reset` after review to unstage if needed.
 
-**1. Prepare review prompt:**
+**1. Run review using `codex review` (primary) with `codex exec` fallback:**
 
 ```bash
 export CODEX_SKILL_CONTEXT=1
@@ -383,17 +383,27 @@ fi
 TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
 mkdir -p "$TMP_DIR"
 CODEX_REVIEW="$TMP_DIR/codex-review-output.md"
-REVIEW_PROMPT="$TMP_DIR/codex-review-prompt.txt"
-DIFF_FILE="$TMP_DIR/codex-review-diff.txt"
-rm -f "$CODEX_REVIEW"
-
-git diff --cached > "$DIFF_FILE"
-DIFF_FILE_ABS="$(cd "$(dirname "$DIFF_FILE")" && pwd)/$(basename "$DIFF_FILE")"
-
+MODEL="${MODEL_SETTING:-}"
 LANGUAGE="${LANGUAGE:-en}"
 LANG_DIRECTIVE=$(codex_get_language_directive "$LANGUAGE")
+rm -f "$CODEX_REVIEW"
 
-cat > "$REVIEW_PROMPT" << EOF
+# Primary: codex review --uncommitted
+# Note: codex review --uncommitted does not accept a custom prompt.
+# Custom review instructions are provided via the fallback codex exec path.
+REVIEW_EXIT=0
+codex_run_review "$CODEX_REVIEW" "$MODEL" || REVIEW_EXIT=$?
+
+if [ "$REVIEW_EXIT" -ne 0 ]; then
+  echo "codex review failed (exit=$REVIEW_EXIT), falling back to codex exec..."
+
+  # Fallback: codex exec with diff file reference
+  REVIEW_PROMPT="$TMP_DIR/codex-review-prompt.txt"
+  DIFF_FILE="$TMP_DIR/codex-review-diff.txt"
+  git diff --cached > "$DIFF_FILE"
+  DIFF_FILE_ABS="$(cd "$(dirname "$DIFF_FILE")" && pwd)/$(basename "$DIFF_FILE")"
+
+  cat > "$REVIEW_PROMPT" << EOF
 ${LANG_DIRECTIVE}Review the implementation described below.
 
 ## Original Plan
@@ -424,7 +434,7 @@ Does implementation match the plan?
 Rate readability and maintainability
 
 ### 3. Bugs and Issues
-List any problems found (severity, location, suggestion)
+List any problems found. Mark with [P1] (critical), [P2] (high), [P3] (medium), [P4] (low).
 
 ### 4. Security Check
 Any vulnerabilities?
@@ -450,32 +460,11 @@ findings:  # if any issues found
 
 Provide your review now.
 EOF
-```
 
-**2. Run Codex review:**
-
-```bash
-export CODEX_SKILL_CONTEXT=1
-
-# Source helpers
-HELPERS=""
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
-  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
-elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
-  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+  SANDBOX="${SANDBOX_SETTING:-read-only}"
+  codex_run_exec "$REVIEW_PROMPT" "$CODEX_REVIEW" "$SANDBOX" "$MODEL"
 fi
-if [ -z "$HELPERS" ] || [ ! -f "$HELPERS" ]; then
-  HELPERS="$(pwd)/scripts/codex-helpers.sh"
-fi
-[ -f "$HELPERS" ] && source "$HELPERS"
 
-TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
-REVIEW_PROMPT="$TMP_DIR/codex-review-prompt.txt"
-CODEX_REVIEW="$TMP_DIR/codex-review-output.md"
-SANDBOX="${SANDBOX_SETTING:-read-only}"
-MODEL="${MODEL_SETTING:-}"
-
-codex_run_exec "$REVIEW_PROMPT" "$CODEX_REVIEW" "$SANDBOX" "$MODEL"
 echo "Codex review saved to: $CODEX_REVIEW"
 ```
 
@@ -490,34 +479,51 @@ Claude must NOT give up after a single review response. The review loop should c
 
 **8.0 Parse verdict from response:**
 
-Extract the verdict from Codex's response:
+Use `codex_infer_verdict()` for unified verdict parsing:
 
 ```bash
-# Extract verdict from the captured output
-VERDICT=$(grep -i "verdict:" "$CODEX_REVIEW" | tail -1 | sed 's/.*verdict:[[:space:]]*//' | tr '[:upper:]' '[:lower:]' | tr -d ' ')
+export CODEX_SKILL_CONTEXT=1
 
-# Also check for verdict patterns in the response body
-if [ -z "$VERDICT" ] || [ "$VERDICT" = "pass/conditional/fail" ]; then
-  if grep -qi "verdict.*pass" "$CODEX_REVIEW"; then
-    VERDICT="pass"
-  elif grep -qi "verdict.*conditional" "$CODEX_REVIEW"; then
-    VERDICT="conditional"
-  elif grep -qi "verdict.*fail" "$CODEX_REVIEW"; then
-    VERDICT="fail"
-  fi
+# Source helpers (same loading pattern as Step 7)
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
 fi
+if [ -z "$HELPERS" ] || [ ! -f "$HELPERS" ]; then
+  HELPERS="$(pwd)/scripts/codex-helpers.sh"
+fi
+[ -f "$HELPERS" ] && source "$HELPERS"
+
+TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
+CODEX_REVIEW="$TMP_DIR/codex-review-output.md"
+
+REVIEW_RESPONSE=$(cat "$CODEX_REVIEW")
+
+# Unified verdict inference: metadata → [P1]-[P4] → no-findings pass
+VERDICT=$(codex_infer_verdict "$REVIEW_RESPONSE") || true
+
+# Extract findings for fix iteration
+FINDINGS=$(codex_extract_review_findings "$REVIEW_RESPONSE")
 
 echo "Detected verdict: $VERDICT"
+if [ -n "$FINDINGS" ]; then
+  echo "Findings:"
+  echo "$FINDINGS"
+fi
 ```
 
 **8.1 If verdict is missing or unclear:**
 
-1. **Check for file access failure:**
+1. **Check for file access failure (fallback path only):**
    - If response contains "Unable to access diff file" → Retry with embedded diff
 
 2. **Retry with embedded diff** (fallback for file access failure):
    ```bash
+   DIFF_FILE="$TMP_DIR/codex-review-diff.txt"
    DIFF_CONTENT=$(cat "$DIFF_FILE")
+   REVIEW_PROMPT="$TMP_DIR/codex-review-prompt.txt"
    cat > "$REVIEW_PROMPT" << EOF
    前回、差分ファイルにアクセスできなかったようです。
    差分を直接含めて再度レビューをお願いします。
@@ -528,6 +534,7 @@ echo "Detected verdict: $VERDICT"
    ${DIFF_CONTENT}
    \`\`\`
 
+   Mark findings with [P1] (critical), [P2] (high), [P3] (medium), [P4] (low).
    verdict: pass / conditional / fail で回答してください。
    EOF
    ```
@@ -543,13 +550,13 @@ Report completion to user with summary. Task complete.
 
 **8.3 If CONDITIONAL:**
 
-1. If specific findings → Apply fixes and re-request review
+1. If specific findings (from `codex_extract_review_findings()`) → Apply fixes and re-request review
 2. If no specific issues → Re-review with clarification
 3. Continue iteration until pass or max iterations
 
 **8.4 If FAIL:**
 
-1. Extract specific issues from the review
+1. Extract specific issues from findings
 2. Apply fixes based on Codex's feedback
 3. Stage changes: `git add -A`
 4. Re-request review with updated diff
@@ -562,22 +569,23 @@ review_round = 0
 max_rounds = review.max_iterations (default: 5)
 verdict_retries = 0
 max_verdict_retries = 3
-diff_embedded = false
 
 WHILE review_round < max_rounds:
   review_round++
 
-  1. Write review prompt to file
-  2. Run codex exec with review prompt
-  3. Parse verdict
+  1. Stage changes: git add -A
+  2. Run review:
+     a. Try codex_run_review() (primary)
+     b. If non-zero exit → fallback to codex_run_exec() with diff
+  3. Parse verdict via codex_infer_verdict()
+  4. Extract findings via codex_extract_review_findings()
 
-  IF response contains "Unable to access diff file":
-    diff_embedded = true
+  IF fallback path AND response contains "Unable to access diff file":
     Rebuild prompt with diff content embedded
     review_round--
     CONTINUE
 
-  IF verdict is missing:
+  IF verdict is empty (unable to determine):
     verdict_retries++
     IF verdict_retries < max_verdict_retries:
       Send follow-up asking for explicit verdict

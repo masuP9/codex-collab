@@ -53,6 +53,22 @@ codex exec -s read-only -m o4-mini - < prompt.txt
 - 出力に ANSI エスケープコードが含まれる場合があるため `codex_strip_ansi()` で除去
 - `codex_run_exec()` がファイル入出力、ANSI 除去、exit code ハンドリングを統合処理
 
+### codex review（コードレビュー）
+
+`codex review --uncommitted` はステージ済み/未コミットの差分を自動収集してレビューを行う専用サブコマンド。
+
+```sh
+# 基本パターン
+codex review --uncommitted
+
+# カスタムプロンプト付き
+codex review --uncommitted "セキュリティ脆弱性に注目してレビュー"
+```
+
+- レビューフェーズでは `codex review` を第一選択、失敗時は `codex exec` にフォールバック
+- `codex_run_review()` が ANSI 除去、出力保存、exit code ハンドリング、モデル指定 retry を統合処理
+- `codex_infer_verdict()` でレスポンスから verdict を推定（メタデータ → `[P1]-[P4]` → findings なし pass）
+
 ## プロジェクト構造
 
 - `commands/` - `/collab` などのスラッシュコマンド
@@ -123,9 +139,15 @@ fi
 コア関数（Codex 実行）:
 
 - `codex_run_exec()` - codex exec のラッパー（stdin パイプ、ANSI 除去、出力保存、exit code ハンドリング）
+- `codex_run_review()` - codex review --uncommitted のラッパー（ANSI 除去、出力保存、モデル retry、exit code ハンドリング）
 - `codex_build_exec_command()` - codex exec コマンド文字列の構築
 - `codex_write_prompt()` - プロンプトを一時ファイルに書き出し
 - `codex_strip_ansi()` - ANSI エスケープコード除去
+
+レビュー解析:
+
+- `codex_infer_verdict()` - レビューレスポンスから verdict を推定（メタデータ → [P1]-[P4] → findings なし pass）
+- `codex_extract_review_findings()` - レビューレスポンスから findings を抽出
 
 ユーティリティ関数:
 

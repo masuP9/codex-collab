@@ -580,6 +580,311 @@ test_build_exec_command() {
 }
 
 # ==============================================================================
+# Test: codex_infer_verdict
+# ==============================================================================
+test_infer_verdict() {
+  echo ""
+  echo "=== Testing: codex_infer_verdict ==="
+
+  # Test 1: metadata verdict pass
+  local response1="Review looks good.
+
+---
+verdict: pass
+---"
+  local result1
+  result1=$(codex_infer_verdict "$response1")
+  if [ "$result1" = "pass" ]; then
+    pass "infer_verdict: metadata pass"
+  else
+    fail "infer_verdict metadata pass" "Expected 'pass', got '$result1'"
+  fi
+
+  # Test 2: metadata verdict conditional
+  local response2="Some issues found.
+
+---
+verdict: conditional
+findings:
+  - minor style issue
+---"
+  local result2
+  result2=$(codex_infer_verdict "$response2")
+  if [ "$result2" = "conditional" ]; then
+    pass "infer_verdict: metadata conditional"
+  else
+    fail "infer_verdict metadata conditional" "Expected 'conditional', got '$result2'"
+  fi
+
+  # Test 3: metadata verdict fail
+  local response3="Critical issues.
+
+---
+verdict: fail
+---"
+  local result3
+  result3=$(codex_infer_verdict "$response3")
+  if [ "$result3" = "fail" ]; then
+    pass "infer_verdict: metadata fail"
+  else
+    fail "infer_verdict metadata fail" "Expected 'fail', got '$result3'"
+  fi
+
+  # Test 4: [P1] marker → fail
+  local response4="Review:
+[P1] Critical security vulnerability in auth module
+[P3] Minor naming inconsistency"
+  local result4
+  result4=$(codex_infer_verdict "$response4")
+  if [ "$result4" = "fail" ]; then
+    pass "infer_verdict: [P1] → fail"
+  else
+    fail "infer_verdict P1" "Expected 'fail', got '$result4'"
+  fi
+
+  # Test 5: [P2] marker → fail
+  local response5="Review:
+[P2] Missing error handling in database layer"
+  local result5
+  result5=$(codex_infer_verdict "$response5")
+  if [ "$result5" = "fail" ]; then
+    pass "infer_verdict: [P2] → fail"
+  else
+    fail "infer_verdict P2" "Expected 'fail', got '$result5'"
+  fi
+
+  # Test 6: [P3] only → conditional
+  local response6="Review:
+[P3] Consider adding more test coverage"
+  local result6
+  result6=$(codex_infer_verdict "$response6")
+  if [ "$result6" = "conditional" ]; then
+    pass "infer_verdict: [P3] → conditional"
+  else
+    fail "infer_verdict P3" "Expected 'conditional', got '$result6'"
+  fi
+
+  # Test 7: [P4] only → conditional
+  local response7="Review:
+[P4] Minor style suggestion: use const instead of let"
+  local result7
+  result7=$(codex_infer_verdict "$response7")
+  if [ "$result7" = "conditional" ]; then
+    pass "infer_verdict: [P4] → conditional"
+  else
+    fail "infer_verdict P4" "Expected 'conditional', got '$result7'"
+  fi
+
+  # Test 8: No findings + sufficient output → empty (unable to determine)
+  # We do NOT auto-infer pass from absence of markers, as the response
+  # may contain plain-text negative feedback without [P1]-[P4] markers.
+  local response8="The code looks clean and well-structured.
+All changes align with the implementation plan.
+Error handling is appropriate.
+Security considerations are addressed.
+Test coverage is adequate.
+No issues found in this review."
+  local result8
+  result8=$(codex_infer_verdict "$response8") || true
+  if [ -z "$result8" ]; then
+    pass "infer_verdict: no markers → empty (unable to determine)"
+  else
+    fail "infer_verdict no markers" "Expected empty, got '$result8'"
+  fi
+
+  # Test 9: Short output + no findings → empty (unable to determine)
+  local response9="OK"
+  local result9
+  result9=$(codex_infer_verdict "$response9") || true
+  if [ -z "$result9" ]; then
+    pass "infer_verdict: short output → empty"
+  else
+    fail "infer_verdict short" "Expected empty, got '$result9'"
+  fi
+
+  # Test 10: [P1] + [P3] mixed → fail (highest severity wins)
+  local response10="Review:
+[P1] SQL injection vulnerability
+[P3] Consider using a constant for the magic number
+[P4] Minor formatting"
+  local result10
+  result10=$(codex_infer_verdict "$response10")
+  if [ "$result10" = "fail" ]; then
+    pass "infer_verdict: [P1]+[P3] mixed → fail"
+  else
+    fail "infer_verdict mixed" "Expected 'fail', got '$result10'"
+  fi
+}
+
+# ==============================================================================
+# Test: codex_extract_review_findings
+# ==============================================================================
+test_extract_review_findings() {
+  echo ""
+  echo "=== Testing: codex_extract_review_findings ==="
+
+  # Test 1: metadata findings
+  local response1="Review text.
+
+---
+verdict: conditional
+findings:
+  - severity: high
+  - missing error handling
+---"
+  local result1
+  result1=$(codex_extract_review_findings "$response1")
+  if echo "$result1" | grep -q "severity: high"; then
+    pass "extract_findings: metadata findings"
+  else
+    fail "extract_findings metadata" "Expected findings, got '$result1'"
+  fi
+
+  # Test 2: [P1]-[P4] markers
+  local response2="Review:
+[P1] Critical bug in auth
+[P3] Style issue"
+  local result2
+  result2=$(codex_extract_review_findings "$response2")
+  if echo "$result2" | grep -q '\[P1\]' && echo "$result2" | grep -q '\[P3\]'; then
+    pass "extract_findings: [P1]-[P4] markers"
+  else
+    fail "extract_findings markers" "Expected P1/P3 findings, got '$result2'"
+  fi
+
+  # Test 3: No findings
+  local response3="Everything looks good. No issues found."
+  local result3
+  result3=$(codex_extract_review_findings "$response3")
+  if [ -z "$result3" ]; then
+    pass "extract_findings: no findings → empty"
+  else
+    fail "extract_findings empty" "Expected empty, got '$result3'"
+  fi
+
+  # Test 4: metadata has findings key but no items
+  local response4="Clean review.
+
+---
+verdict: pass
+---"
+  local result4
+  result4=$(codex_extract_review_findings "$response4")
+  if [ -z "$result4" ]; then
+    pass "extract_findings: no findings items → empty"
+  else
+    fail "extract_findings no items" "Expected empty, got '$result4'"
+  fi
+}
+
+# ==============================================================================
+# Test: codex_run_review (with mock codex)
+# ==============================================================================
+test_run_review() {
+  echo ""
+  echo "=== Testing: codex_run_review ==="
+
+  # Save original PATH and tmp dir
+  local orig_path="$PATH"
+  local orig_tmp_dir="${CODEX_TMP_DIR:-}"
+  local test_tmp=".test-tmp-review-$$"
+  CODEX_TMP_DIR="$test_tmp"
+  rm -rf "$test_tmp"
+  mkdir -p "$test_tmp"
+
+  local mock_dir="$test_tmp/mock-bin"
+  mkdir -p "$mock_dir"
+
+  # Test 1: codex not in PATH → return 127
+  PATH="/usr/bin:/bin"  # exclude mock dir and any real codex
+  local exit1=0
+  local out1="$test_tmp/out1.md"
+  codex_run_review "$out1" "" || exit1=$?
+  if [ "$exit1" -eq 127 ]; then
+    pass "run_review: codex not found → 127"
+  else
+    fail "run_review not found" "Expected exit 127, got $exit1"
+  fi
+
+  # Test 2: codex exists but review --help fails → return 127
+  cat > "$mock_dir/codex" << 'MOCK'
+#!/bin/bash
+if [ "$1" = "review" ] && [ "$2" = "--help" ]; then
+  exit 1
+fi
+echo "mock output"
+MOCK
+  chmod +x "$mock_dir/codex"
+  PATH="$mock_dir:/usr/bin:/bin"
+
+  local exit2=0
+  local out2="$test_tmp/out2.md"
+  codex_run_review "$out2" "" || exit2=$?
+  if [ "$exit2" -eq 127 ]; then
+    pass "run_review: review not supported → 127"
+  else
+    fail "run_review not supported" "Expected exit 127, got $exit2"
+  fi
+
+  # Test 3: codex review works normally
+  cat > "$mock_dir/codex" << 'MOCK'
+#!/bin/bash
+if [ "$1" = "review" ] && [ "$2" = "--help" ]; then
+  exit 0
+fi
+if [ "$1" = "review" ] && [ "$2" = "--uncommitted" ]; then
+  echo "Review complete. No issues found."
+  echo "---"
+  echo "verdict: pass"
+  echo "---"
+  exit 0
+fi
+echo "unknown command"
+exit 1
+MOCK
+  chmod +x "$mock_dir/codex"
+  PATH="$mock_dir:/usr/bin:/bin"
+
+  local exit3=0
+  local out3="$test_tmp/out3.md"
+  codex_run_review "$out3" "" || exit3=$?
+  if [ "$exit3" -eq 0 ] && grep -q "verdict: pass" "$out3"; then
+    pass "run_review: successful review"
+  else
+    fail "run_review success" "Expected exit 0 + verdict pass, got exit=$exit3"
+  fi
+
+  # Test 4: codex review fails with non-zero → returns that code
+  cat > "$mock_dir/codex" << 'MOCK'
+#!/bin/bash
+if [ "$1" = "review" ] && [ "$2" = "--help" ]; then
+  exit 0
+fi
+if [ "$1" = "review" ] && [ "$2" = "--uncommitted" ]; then
+  echo "Error: API failure"
+  exit 2
+fi
+exit 1
+MOCK
+  chmod +x "$mock_dir/codex"
+  PATH="$mock_dir:/usr/bin:/bin"
+
+  local exit4=0
+  local out4="$test_tmp/out4.md"
+  codex_run_review "$out4" "" || exit4=$?
+  if [ "$exit4" -ne 0 ]; then
+    pass "run_review: non-zero exit → fallback signal"
+  else
+    fail "run_review failure" "Expected non-zero exit, got $exit4"
+  fi
+
+  # Cleanup
+  PATH="$orig_path"
+  rm -rf "$test_tmp"
+  CODEX_TMP_DIR="$orig_tmp_dir"
+}
+
+# ==============================================================================
 # Main
 # ==============================================================================
 main() {
@@ -607,6 +912,11 @@ main() {
   test_strip_ansi
   test_write_prompt
   test_build_exec_command
+
+  # Verdict inference and review tests
+  test_infer_verdict
+  test_extract_review_findings
+  test_run_review
 
   # Summary
   echo ""
