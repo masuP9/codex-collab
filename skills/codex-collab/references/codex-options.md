@@ -285,6 +285,13 @@ codex_run_review "$REVIEW_OUTPUT" "o4-mini"
 | `codex_extract_review_findings(response)` | Extract findings from review response |
 | `codex_build_exec_command(prompt, sandbox, model)` | Build command string (for eval) |
 | `codex_strip_ansi(text)` | Remove ANSI escape codes from output |
+| `codex_save_session_state(task_id, mode, thread_id, sandbox, workflow)` | Save session state to JSON (task_id-scoped) |
+| `codex_load_session_state(task_id)` | Load session state, sets SESSION_* globals |
+| `codex_save_thread(task_id, name, thread_id)` | Save named thread (for claude-leads Thread B/C) |
+| `codex_load_thread(task_id, name)` | Load named thread ID |
+| `codex_diff_tier(diff_content)` | Determine diff size tier (small/medium/large) |
+| `codex_sanitize_task_id(raw_id)` | Sanitize task_id for filename safety |
+| `codex_json_escape(value)` | Escape string for JSON embedding |
 
 ### Key Points
 
@@ -311,3 +318,51 @@ For long operations, consider:
 - Breaking task into smaller prompts
 - Using simpler model for initial pass
 - Providing more specific context to reduce thinking time
+
+## Codex MCP Tools
+
+Codex MCP サーバー (`codex mcp-server`) が提供するツールで、ステートフルなセッション管理が可能。
+
+### `mcp__codex__codex` — Start a new session
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `prompt` | string | Yes | Initial user prompt |
+| `sandbox` | enum | No | `read-only` / `workspace-write` / `danger-full-access` |
+| `model` | string | No | Model override (e.g., `gpt-5.2-codex`) |
+| `cwd` | string | No | Working directory |
+| `developer-instructions` | string | No | Developer-role instructions (e.g., language directive) |
+| `approval-policy` | enum | No | `untrusted` / `on-failure` / `on-request` / `never` |
+| `base-instructions` | string | No | Override default instructions |
+| `profile` | string | No | Config profile from config.toml |
+| `config` | object | No | Individual config overrides |
+
+**Returns:** Response text and `threadId` for session continuation.
+
+### `mcp__codex__codex-reply` — Continue an existing session
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `threadId` | string | Yes | Thread ID from a previous `mcp__codex__codex` call |
+| `prompt` | string | Yes | Next user prompt |
+
+**Returns:** Response text (same thread context preserved).
+
+### CLI vs MCP Comparison
+
+| Aspect | `codex exec` (CLI/Bash) | MCP Tools |
+|--------|------------------------|-----------|
+| State | Stateless (each call independent) | Stateful (threadId preserves context) |
+| ANSI codes | Present in output, needs stripping | Clean text, no stripping needed |
+| I/O | File-based (prompt.txt → output.md) | Direct tool parameters/response |
+| Review | `codex review --uncommitted` available | Not available (embed diff in prompt) |
+| Multi-turn | Manual history reconstruction | Automatic (thread preserves history) |
+| Timeout | Bash tool limit (600s max) | MCP framework manages |
+| Setup | CLI installed + PATH | MCP server configured |
+| Fallback | Always available if codex installed | Falls back to CLI if MCP unavailable |
+
+### When to Use MCP vs CLI
+
+- **MCP preferred**: Multi-turn exchanges, iterative reviews (thread preserves context)
+- **CLI preferred**: Large diff reviews (`codex review --uncommitted`), environments without MCP setup
+- **codex-collab default**: MCP primary, CLI fallback (detected automatically in Step 0a)
