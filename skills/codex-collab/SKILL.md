@@ -1,5 +1,5 @@
 ---
-name: Codex Collaboration
+name: Codex Collab
 description: This skill should be used when the user asks to "collaborate with Codex", "use Codex for planning", "get Codex review", "delegate to Codex", "Codexと協調", "Codexにレビュー", "Codexに計画を作成させたい", "Codexに任せる", "Codexに委任", "Codexと連携", "Codexに相談", "Codexの意見", "Claude plans", "Claude-led", "Claudeが計画", "Claude主導", "Codexに実装させる", "Codexに実装を任せる", "Claudeがレビュー", or mentions coordinating tasks between Claude Code and Codex CLI.
 ---
 

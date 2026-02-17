@@ -8,7 +8,7 @@ The codex-collab plugin includes a PreToolUse hook that enforces skill-based exe
 
 ## Why Use Skills Instead of Direct Bash?
 
-When you execute Bash commands through a skill (like `/collab-codex`), the commands run within the skill's permission scope (`allowed-tools: Bash`). This means:
+When you execute Bash commands through a skill (like `/codex-collab`), the commands run within the skill's permission scope (`allowed-tools: Bash`). This means:
 
 - **No approval prompts**: Commands are pre-authorized by the skill definition
 - **Consistent behavior**: The same command always works the same way
@@ -20,7 +20,7 @@ When you execute the same commands **outside** a skill context (directly in conv
 
 | Skill | Purpose | Example |
 |-------|---------|---------|
-| `/collab-codex [task]` | Start a new collaboration workflow | `/collab-codex implement feature X` |
+| `/codex-collab [task]` | Start a new collaboration workflow | `/codex-collab implement feature X` |
 | `/strong-inference [problem]` | Investigate a problem with competing hypotheses | `/strong-inference APIが時々500エラーを返す` |
 | `/devils-advocate [proposal]` | Stress-test a design or proposal | `/devils-advocate このキャッシュ設計を検証して` |
 
@@ -81,7 +81,7 @@ If you try to execute codex-collab operations outside a skill context, you'll se
 This Bash command uses codex-collab helper functions directly.
 
 Use the appropriate skill instead:
-- /collab-codex [task] - Start collaboration
+- /codex-collab [task] - Start collaboration
 - /strong-inference [problem] - Investigate problems
 - /devils-advocate [proposal] - Stress-test designs
 

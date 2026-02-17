@@ -38,7 +38,7 @@ codex-collab プラグインのレガシーコードを削除し、コードベ�
 | ファイル | 行数 | サイズ | 問題 |
 |----------|------|--------|------|
 | codex-helpers.sh | 2,687行 | 88KB | 67関数中0が使用される |
-| collab-codex.md | 1,085行 | 40KB | 500行以上がインライン重複 |
+| codex-collab.md | 1,085行 | 40KB | 500行以上がインライン重複 |
 | collab-codex-attach.md | 559行 | 20KB | 150行以上がインライン重複 |
 | strong-inference.md | 873行 | 28KB | 中程度の複雑さ |
 
@@ -107,7 +107,7 @@ references/protocol/legacy-exec-mode.md         # 廃止（もし存在すれば
 コマンドファイル内のインラインフォールバックを削除し、ヘルパー関数を実際に呼び出すように変更:
 
 ```markdown
-# Before (collab-codex.md)
+# Before (codex-collab.md)
 if type codex_wait_completion &>/dev/null; then
   codex_wait_completion "$CODEX_PANE" "$END_MARKER" "$BEFORE_HASH"
 else
