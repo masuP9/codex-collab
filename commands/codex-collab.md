@@ -1,5 +1,5 @@
 ---
-name: collab-codex
+name: codex-collab
 description: Start a collaborative task with Codex (default: codex-leads workflow)
 argument-hint: [task description]
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion, mcp__codex__codex, mcp__codex__codex-reply

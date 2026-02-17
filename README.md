@@ -50,7 +50,7 @@ codex-collab/
 ├── .claude-plugin/
 │   └── plugin.json         # プラグインメタデータ
 ├── commands/
-│   ├── collab-codex.md     # /collab-codex コマンド
+│   ├── codex-collab.md     # /codex-collab コマンド
 │   ├── strong-inference.md # /strong-inference コマンド
 │   └── devils-advocate.md  # /devils-advocate コマンド
 ├── scripts/
@@ -92,12 +92,12 @@ codex-collab/
 
 ## 使い方
 
-### `/collab-codex` コマンド
+### `/codex-collab` コマンド
 
 協調ワークフローを開始します。
 
 ```
-/collab-codex 新しい認証機能を実装して
+/codex-collab 新しい認証機能を実装して
 ```
 
 **Codex 呼び出し:**
@@ -170,7 +170,7 @@ Devil's Advocate（悪魔の代弁者）メソッドを使って、設計案や�
 | 設計案のレビュー | `/devils-advocate` | 反論を通じて弱点を発見 |
 | アーキテクチャ決定の検証 | `/devils-advocate` | 議論で合意形成 |
 | リスク評価 | `/devils-advocate` | 批判的視点で穴を見つける |
-| PRのコードレビュー | `/collab-codex` | 実装済みコードの品質確認 |
+| PRのコードレビュー | `/codex-collab` | 実装済みコードの品質確認 |
 
 #### 判断が難しいケース
 
@@ -179,7 +179,7 @@ Devil's Advocate（悪魔の代弁者）メソッドを使って、設計案や�
 - 設計案の妥当性 → `/devils-advocate`（議論で仮説を強化）
 
 **「レビューしてほしい」と言われたら？**
-- 実装済みコード → `/collab-codex`（品質チェック）
+- 実装済みコード → `/codex-collab`（品質チェック）
 - 設計案・提案 → `/devils-advocate`（批判的検証）
 
 #### 簡単な見分け方
@@ -187,7 +187,7 @@ Devil's Advocate（悪魔の代弁者）メソッドを使って、設計案や�
 ```
 「なぜ？」「原因は？」 → /strong-inference
 「これで良いか？」「弱点は？」 → /devils-advocate
-「実装をチェック」 → /collab-codex
+「実装をチェック」 → /codex-collab
 ```
 
 ## 設定
@@ -237,7 +237,7 @@ sandbox: read-only
 Codex が計画・レビュー、Claude が実装するワークフロー。推論に優れたモデル（o3, gpt-5等）に最適。
 
 ```
-1. ユーザー: /collab-codex "機能Xを実装して"
+1. ユーザー: /codex-collab "機能Xを実装して"
 2. Claude Code: タスク分析・Codex向けプロンプト作成
 3. Codex: 計画作成
 4. Claude Code: 計画確認・実装
@@ -250,7 +250,7 @@ Codex が計画・レビュー、Claude が実装するワークフロー。推�
 Claude が計画・レビュー、Codex が実装するワークフロー。高速実行向きモデル（codex-mini, o4-mini等）に最適。
 
 ```
-1. ユーザー: /collab-codex "機能Xを実装して"
+1. ユーザー: /codex-collab "機能Xを実装して"
 2. Claude Code: 深いコードベース分析
 3. Claude Code: 詳細な実装計画を作成
 4. (optional) Codex: 計画をレビュー（壁打ち）

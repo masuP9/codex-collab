@@ -20,10 +20,10 @@ The **primary and most reliable** method is checking for the `CODEX_SKILL_CONTEX
 **How to detect skill context (in order of reliability):**
 
 1. **Environment variable (RELIABLE)**: The command includes `export CODEX_SKILL_CONTEXT=1`
-   - All `/collab-codex`, `/strong-inference`, and `/devils-advocate` commands set this at the beginning
+   - All `/codex-collab`, `/strong-inference`, and `/devils-advocate` commands set this at the beginning
    - This is the definitive signal that the command is running in skill context
 
-2. **Heuristic (less reliable)**: You are currently processing a `/collab-codex`, `/strong-inference`, or `/devils-advocate` command
+2. **Heuristic (less reliable)**: You are currently processing a `/codex-collab`, `/strong-inference`, or `/devils-advocate` command
    - Note: This may not be reliably accessible to the hook depending on platform implementation
 
 **If skill context is detected**: Allow all Bash commands to proceed without blocking.
@@ -52,7 +52,7 @@ Check if the command contains any of these patterns using word-boundary matching
 1. **BLOCK** this Bash execution
 2. **Inform the user** that codex-collab operations should use skills
 3. **Suggest** the appropriate skill:
-   - For starting collaboration: `/collab-codex [task]`
+   - For starting collaboration: `/codex-collab [task]`
    - For investigating problems: `/strong-inference [problem]`
    - For stress-testing designs: `/devils-advocate [proposal]`
 
@@ -67,7 +67,7 @@ Allow the Bash command to proceed normally without any output.
 This Bash command uses codex-collab helper functions directly.
 
 Use the appropriate skill instead:
-- /collab-codex [task] - Start collaboration
+- /codex-collab [task] - Start collaboration
 - /strong-inference [problem] - Investigate problems
 - /devils-advocate [proposal] - Stress-test designs
 

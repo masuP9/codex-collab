@@ -31,7 +31,7 @@ if echo "$COMMAND" | grep -qE "$PATTERN"; then
 This Bash command uses codex-collab helper functions directly.
 
 Use the appropriate skill instead:
-- /collab-codex [task] - Start collaboration
+- /codex-collab [task] - Start collaboration
 - /strong-inference [problem] - Investigate problems
 - /devils-advocate [proposal] - Stress-test designs
 
