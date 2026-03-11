@@ -109,6 +109,7 @@ codex-collab のヘルパー関数を直接 Bash で実行すると、承認プ�
 | 目的 | 使用するスキル |
 |------|---------------|
 | 協調タスク開始 | `/codex-collab [task]` |
+| 協調計画作成 | `/collab-planning [idea]` |
 | 問題調査 | `/strong-inference [problem]` |
 | 設計検証 | `/devils-advocate [proposal]` |
 

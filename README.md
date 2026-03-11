@@ -4,7 +4,7 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 
 ## 概要
 
-このプラグインは、Claude Code と Codex の強みを組み合わせた協調ワークフローを提供します。`codex exec` によるステートレス実行で Codex と通信し、シンプルなアーキテクチャを実現しています。
+このプラグインは、Claude Code と Codex の強みを組み合わせた協調ワークフローを提供します。**MCP primary + Bash fallback** のデュアルモードアーキテクチャで Codex と通信します。
 
 **Codex-Leads（従来のレビュー型）:**
 - **Codex**: 計画作成・コードレビュー
@@ -29,10 +29,27 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 - OpenAI Codex CLI (`codex`) がインストールされていること
 - `codex exec` が動作すること（`echo "test" | codex exec -s read-only -`）
 - 環境変数 `OPENAI_API_KEY` が設定されていること
+- (推奨) Codex MCP サーバー設定済み（`codex mcp-server`）
 
 ## アーキテクチャ
 
-Codex CLI との通信は `codex exec`（ステートレス実行）を使用します:
+Codex CLI との通信は **MCP primary + Bash fallback** のデュアルモードを採用しています。
+
+### MCP モード（推奨）
+
+Codex MCP サーバー (`codex mcp-server`) 経由でステートフルなセッション管理:
+
+```
+Claude Code → mcp__codex__codex → threadId で会話継続 → mcp__codex__codex-reply
+```
+
+- ステートフル: `threadId` で会話コンテキスト保持（multi-turn exchange で履歴再構築不要）
+- クリーンテキスト: ANSI 除去不要
+- ファイル I/O 不要: prompt/output の tmp ファイル不要
+
+### Bash モード（フォールバック）
+
+MCP が利用できない場合は `codex exec`（ステートレス実行）にフォールバック:
 
 ```
 Claude Code → Bash tool → codex exec → stdout 取得 → パース
@@ -41,46 +58,65 @@ Claude Code → Bash tool → codex exec → stdout 取得 → パース
 - プロンプトを stdin から渡し、結果を stdout で受け取るシンプルな構造
 - 各呼び出しは独立（会話コンテキストはプロンプト内に明示的に含める）
 - `codex_run_exec()` が入出力、ANSI エスケープ除去、exit code ハンドリングを統合処理
-- バックグラウンド実行が必要な場合は Bash tool の `run_in_background: true` を使用
+
+### モード自動判定
+
+スキル起動時に MCP の可用性を自動プローブし、利用可能なら MCP モード、不可なら Bash モードにフォールバックします。
 
 ## プロジェクト構造
 
 ```
 codex-collab/
 ├── .claude-plugin/
-│   └── plugin.json         # プラグインメタデータ
+│   ├── plugin.json            # プラグインメタデータ
+│   └── marketplace.json       # マーケットプレイス公開用メタデータ
 ├── commands/
-│   ├── codex-collab.md     # /codex-collab コマンド
-│   ├── strong-inference.md # /strong-inference コマンド
-│   └── devils-advocate.md  # /devils-advocate コマンド
+│   ├── codex-collab.md        # /codex-collab コマンド
+│   ├── collab-planning.md     # /collab-planning コマンド
+│   ├── strong-inference.md    # /strong-inference コマンド
+│   └── devils-advocate.md     # /devils-advocate コマンド
+├── hooks/
+│   ├── enforce-skill-usage.sh # PreToolUse フック（スキル経由強制）
+│   └── enforce-skill-usage.md # フック設定ドキュメント
 ├── scripts/
-│   └── codex-helpers.sh    # 共通ヘルパー関数
+│   ├── codex-helpers.sh       # 共通ヘルパー関数
+│   └── test-helpers.sh        # ヘルパーのテストスイート
+├── docs/
+│   └── bash-usage.md          # Bash 使用ルール詳細
 └── skills/
     ├── codex-collab/
-    │   └── references/     # プロトコル定義
+    │   └── references/        # プロトコル定義・テンプレート
+    ├── collab-planning/
+    │   └── references/        # 計画テンプレート・レビュー基準
     ├── strong-inference/
-    │   └── references/     # 仮説テンプレート
+    │   └── references/        # 仮説テンプレート
     └── devils-advocate/
-        └── references/     # 評価基準
+        └── references/        # 評価基準・批評テンプレート
 ```
 
 ### ヘルパースクリプト
 
 `scripts/codex-helpers.sh` には、コマンド間で共有される関数が定義されています:
 
-**コア関数（Codex 実行）:**
+**コア関数（Bash fallback 用の Codex 実行）:**
 - `codex_run_exec()` - codex exec のラッパー（stdin パイプ、ANSI 除去、出力保存、exit code ハンドリング）
 - `codex_build_exec_command()` - codex exec コマンド文字列の構築
 - `codex_write_prompt()` - プロンプトを一時ファイルに書き出し
 - `codex_strip_ansi()` - ANSI エスケープコード除去
 
-**ユーティリティ関数:**
-- `codex_ensure_tmp_dir()` - 一時ディレクトリ管理
-- `codex_tmp_path()` - 一時ディレクトリ内のファイルパス取得
-- `codex_hash_content()` - クロスプラットフォームハッシュ計算
-- `codex_generate_signal()` - ユニークID生成
-- `codex_get_language_directive()` - 言語指示生成
-- `codex_debug()` - デバッグログ出力
+**レビュー解析（Bash fallback 用）:**
+- `codex_run_review()` - codex review --uncommitted のラッパー（ANSI 除去、出力保存、モデル retry、exit code ハンドリング）
+- `codex_infer_verdict()` - レビューレスポンスから verdict を推定（メタデータ → [P1]-[P4] → findings なし pass）
+- `codex_extract_review_findings()` - レビューレスポンスから findings を抽出
+
+**セッション状態管理（MCP/Bash デュアルモード用）:**
+- `codex_save_session_state()` - セッション状態を JSON ファイルに保存（task_id 単位で分離）
+- `codex_load_session_state()` - セッション状態を読み込み（MODE, THREAD_ID 等をグローバル変数にセット）
+- `codex_save_thread()` - 名前付きスレッドを保存（claude-leads の Thread B/C 用）
+- `codex_load_thread()` - 名前付きスレッドを読み込み
+- `codex_sanitize_task_id()` - task_id のファイル名安全化（英数字・ハイフン・アンダースコアのみ）
+- `codex_json_escape()` - JSON 値のエスケープ（引用符・バックスラッシュ・改行）
+- `codex_diff_tier()` - diff のサイズに応じてティア判定（small/medium/large）
 
 **メタデータ抽出:**
 - `codex_extract_metadata()` - 応答末尾のYAMLブロックを抽出
@@ -88,22 +124,52 @@ codex-collab/
 - `codex_get_status()` - status フィールド取得（continue/stop）
 - `codex_get_verdict()` - verdict フィールド取得（pass/conditional/fail）
 
+**ユーティリティ関数:**
+- `codex_ensure_tmp_dir()` - 一時ディレクトリ管理
+- `codex_tmp_path()` - 一時ディレクトリ内のファイルパス取得
+- `codex_hash_content()` - クロスプラットフォームハッシュ計算
+- `codex_generate_signal()` - ユニークID生成
+- `codex_get_language_directive()` - 言語指示生成（多言語対応）
+- `codex_debug()` - デバッグログ出力
+
 各コマンドは自動的にヘルパーをsourceします。
 
 ## 使い方
 
 ### `/codex-collab` コマンド
 
-協調ワークフローを開始します。
+協調ワークフローを開始します。計画・実装・レビューの完全サイクル。
 
 ```
 /codex-collab 新しい認証機能を実装して
 ```
 
-**Codex 呼び出し:**
-- `codex exec` によるステートレス実行（ブロッキング、stdout 出力）
-- 各呼び出しは独立（会話コンテキストはプロンプト内に明示的に含める）
+**特徴:**
+- MCP モードではステートフルなセッションで Codex と対話
+- Bash フォールバック: `codex exec` によるステートレス実行
 - Codex CLI が未インストールの場合は Claude-only モードにフォールバック
+
+### `/collab-planning` コマンド
+
+Codex と協調して実装計画を作成します。**計画のみ — 実装は行いません。**
+
+```
+# 基本的な使い方
+/collab-planning ユーザーリストAPIにページネーションを追加したい
+
+# イテレーション数指定
+/collab-planning --max-iterations 5 認証モジュールのリファクタリング計画
+
+# モード指定
+/collab-planning --mode claude-only データベース移行の計画を立てたい
+```
+
+**特徴:**
+- Claude がコンテキスト収集・ドラフト作成、Codex がレビュー・改善提案
+- 固定テンプレート出力（目的/スコープ外/WBS/実装手順/リスク/検証/完了条件）
+- 品質評価に基づく自動イテレーション（good → 完了、needs-improvement → 改善、major-revision → ユーザー確認）
+- 各ラウンド末に要約スナップショット（決定事項/未解決/却下案）で文脈劣化を防止
+- 計画ログを `tmp/collab-planning/` に保存
 
 ### `/strong-inference` コマンド
 
@@ -148,31 +214,40 @@ Devil's Advocate（悪魔の代弁者）メソッドを使って、設計案や�
 ### スキルの自動起動
 
 以下のようなリクエストで自動的にスキルが有効になります:
-- 「Codexと協調してタスクを実行したい」
-- 「Codexにレビューを依頼して」
-- 「Codexに計画を作成させたい」
+- 「Codexと協調してタスクを実行したい」（codex-collabスキル）
+- 「Codexにレビューを依頼して」（codex-collabスキル）
+- 「Codexに計画を作成させたい」（codex-collabスキル）
+- 「計画を立てたい」「実装計画を作成して」（collab-planningスキル）
+- 「Codexと計画を練りたい」「plan with Codex」（collab-planningスキル）
 - 「このバグの原因を調査して」（Strong Inferenceスキル）
 - 「仮説を立てて検証して」（Strong Inferenceスキル）
 - 「この設計を批判的にレビューして」（Devil's Advocateスキル）
 - 「反論をもらいたい」（Devil's Advocateスキル）
 
-### Strong Inference vs Devil's Advocate の使い分け
+### スキルの使い分け
 
-両スキルは目的が異なります。以下のガイドを参考にしてください。
+4つのスキルは目的が異なります。以下のガイドを参考にしてください。
 
 #### ユースケース別の推奨スキル
 
 | ユースケース | 推奨スキル | 理由 |
 |-------------|-----------|------|
+| 実装前の計画策定 | `/collab-planning` | 計画のみに集中、実装は起動しない |
+| 大規模タスクの分解 | `/collab-planning` | WBS で作業を構造化 |
 | バグの原因調査 | `/strong-inference` | 競合仮説を立て、実験で排除 |
 | パフォーマンス問題の調査 | `/strong-inference` | 原因を絞り込む検証が必要 |
 | なぜ動かないか分からない | `/strong-inference` | 未知の原因を特定する |
 | 設計案のレビュー | `/devils-advocate` | 反論を通じて弱点を発見 |
 | アーキテクチャ決定の検証 | `/devils-advocate` | 議論で合意形成 |
 | リスク評価 | `/devils-advocate` | 批判的視点で穴を見つける |
+| 中小タスクの計画〜実装〜レビュー | `/codex-collab` | 一気通貫の完全サイクル |
 | PRのコードレビュー | `/codex-collab` | 実装済みコードの品質確認 |
 
 #### 判断が難しいケース
+
+**「計画を立てたい」と言われたら？**
+- 計画のみが目的 → `/collab-planning`（計画文書を成果物として出力）
+- 計画 + 実装まで → `/codex-collab`（計画後に実装・レビューへ進行）
 
 **「仮説を検証したい」と言われたら？**
 - 原因不明の問題 → `/strong-inference`（実験で仮説を排除）
@@ -181,13 +256,15 @@ Devil's Advocate（悪魔の代弁者）メソッドを使って、設計案や�
 **「レビューしてほしい」と言われたら？**
 - 実装済みコード → `/codex-collab`（品質チェック）
 - 設計案・提案 → `/devils-advocate`（批判的検証）
+- 実装計画 → `/collab-planning`（Codex に計画をレビューしてもらう）
 
 #### 簡単な見分け方
 
 ```
+「計画だけ作りたい」 → /collab-planning
 「なぜ？」「原因は？」 → /strong-inference
 「これで良いか？」「弱点は？」 → /devils-advocate
-「実装をチェック」 → /codex-collab
+「実装をチェック」「実装して」 → /codex-collab
 ```
 
 ## 設定
@@ -212,6 +289,7 @@ sandbox: read-only
 | `workflow` | `auto` | ワークフロー選択 (auto, codex-leads, claude-leads) |
 | `model` | (Codexデフォルト) | 使用するモデル (o3, o4-mini等) |
 | `sandbox` | `read-only` | サンドボックスモード (read-only, workspace-write, danger-full-access)。codex-leads用 |
+| `language` | `en` | レスポンス言語 (en, ja 等) |
 | `exchange.enabled` | `true` | Planning exchangeのグローバルキルスイッチ (codex-leads) |
 | `exchange.max_iterations` | `3` | Planning exchangeの最大ラウンド数 |
 | `exchange.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
@@ -223,6 +301,8 @@ sandbox: read-only
 | `claude_leads.consult_codex` | `true` | 計画の壁打ちフェーズ有効化 (claude-leads) |
 | `claude_leads.safety_checkpoint` | `stash` | 実装前チェックポイント (stash, wip-commit, none) |
 | `claude_leads.review.max_iterations` | `3` | Claudeレビュー修正ループの上限 (claude-leads) |
+| `collab_planning.max_iterations` | `3` | 計画レビュー改善サイクルの上限 |
+| `collab_planning.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
 
 ### 設定の優先順位
 
