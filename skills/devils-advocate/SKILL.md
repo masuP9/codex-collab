@@ -1,6 +1,6 @@
 ---
 name: Devil's Advocate
-description: This skill should be used when the user wants to "stress-test a design", "challenge an idea", "red team a proposal", "get critical feedback", "validate a design", "review architecture", "risk assessment", "設計を検証して", "反論をもらいたい", "批判的にレビュー", "デビルズアドボケート", "ストレステスト", "弱点を指摘して", "穴を見つけて", "この設計で良いか", "リスク評価", "アーキテクチャレビュー", or mentions structured adversarial review of a proposal or design. NOTE: Use this for validating PROPOSALS and DESIGNS, not for investigating unknown bugs (use strong-inference for that).
+description: This skill should be used when the user wants to "stress-test a design", "challenge an idea", "red team a proposal", "get critical feedback on a design", "validate a design", "adversarial architecture review", "risk assessment", "設計を検証して", "反論をもらいたい", "設計を批判的にレビュー", "デビルズアドボケート", "ストレステスト", "弱点を指摘して", "穴を見つけて", "この設計で良いか", "リスク評価", "設計のアーキテクチャレビュー", or mentions structured adversarial review of a proposal or design. NOTE: Use this for validating PROPOSALS and DESIGNS through adversarial debate, NOT for generic code review, PR review, or normal review requests (use codex-collab for those). Also NOT for investigating unknown bugs (use strong-inference for that).
 ---
 
 # Devil's Advocate Skill
