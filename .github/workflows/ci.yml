@@ -13,6 +13,9 @@ jobs:
       - name: Run helper tests
         run: bash scripts/test-helpers.sh
 
+      - name: Run Claude collaboration helper tests
+        run: bash skills/claude-collab/scripts/test-claude-helpers.sh
+
   lint:
     runs-on: ubuntu-latest
     steps:
