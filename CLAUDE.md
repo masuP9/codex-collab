@@ -2,6 +2,18 @@
 
 このファイルはClaude Codeがこのリポジトリで作業する際のガイダンスを提供します。
 
+## Codex Leaf Reviewer Mode
+
+Codex 側の `claude-collab` ラッパーから呼び出された場合、CLI の system prompt に `CLAUDE_COLLAB_CALLER=codex` 相当の leaf reviewer 指示が含まれます。
+
+その場合:
+
+- この `CLAUDE.md` はプロジェクト構造、リリースルール、実装上の制約を理解するために使用する
+- Codex MCP、`codex exec`、`codex review`、Codex と一緒に作業するためのスキル、スラッシュコマンドを呼び出さない
+- 新しく Codex と一緒に作業を始めず、既存セッションも継続しない
+- ファイル変更、PR 作成、Bash 委任を行わない
+- 依頼されたレビューまたは助言だけを返して終了する
+
 ## リリースワークフロー
 
 ### バージョン更新

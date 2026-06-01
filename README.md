@@ -2,6 +2,8 @@
 
 Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプラグイン。
 
+Claude Code から Codex を呼び出す既存フローに加え、Codex から Claude Code を read-only の相談役として呼び出す `claude-collab` スキルも提供します。
+
 ## 概要
 
 このプラグインは、Claude Code と Codex の強みを組み合わせた協調ワークフローを提供します。**MCP primary + Bash fallback** のデュアルモードアーキテクチャで Codex と通信します。
@@ -16,6 +18,8 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 
 ## インストール
 
+### Claude Code から使う
+
 ```bash
 # マーケットプレイスを追加
 /plugin marketplace add https://github.com/masuP9/codex-collab
@@ -24,12 +28,24 @@ Claude Code と OpenAI Codex CLI を協調させてタスクを実行するプ�
 /plugin install codex-collab@codex-collab
 ```
 
+### Codex から使う
+
+Codex のスキルディレクトリへシンボリックリンクを作成します。
+
+```bash
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
+ln -s "$(pwd)/skills/claude-collab" "${CODEX_HOME:-$HOME/.codex}/skills/claude-collab"
+```
+
+Codex で「Claude と一緒に実装して」「Claude にレビューしてもらって」のように依頼すると、`claude-collab` スキルが Claude Code CLI を read-only の相談役として呼び出します。
+
 ## 前提条件
 
 - OpenAI Codex CLI (`codex`) がインストールされていること
 - `codex exec` が動作すること（`echo "test" | codex exec -s read-only -`）
 - 環境変数 `OPENAI_API_KEY` が設定されていること
 - (推奨) Codex MCP サーバー設定済み（`codex mcp-server`）
+- Codex から `claude-collab` を使う場合は Claude Code CLI (`claude`) がインストール済みであること
 
 ## アーキテクチャ
 
@@ -86,6 +102,9 @@ codex-collab/
 └── skills/
     ├── codex-collab/
     │   └── references/        # プロトコル定義・テンプレート
+    ├── claude-collab/
+    │   ├── scripts/           # Codex から Claude を呼ぶ read-only ヘルパーとテスト
+    │   └── references/        # Claude 相談・レビュー用テンプレート
     ├── collab-planning/
     │   └── references/        # 計画テンプレート・レビュー基準
     ├── strong-inference/

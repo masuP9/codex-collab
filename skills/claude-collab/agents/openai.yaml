@@ -1,0 +1,4 @@
+interface:
+  display_name: "Claude Collaboration"
+  short_description: "Consult Claude while Codex implements and verifies changes"
+  default_prompt: "Use $claude-collab to ask Claude for a plan and review while implementing this task."
