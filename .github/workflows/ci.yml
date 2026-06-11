@@ -81,3 +81,6 @@ jobs:
 
           print(f"Checked {len(files)} YAML file(s).")
           PY
+
+      - name: Plugin consistency lint
+        run: bash scripts/lint-plugin.sh
