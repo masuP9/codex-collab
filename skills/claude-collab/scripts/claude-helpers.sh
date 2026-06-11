@@ -2,6 +2,7 @@
 # Read-only Claude Code consultation helpers for Codex.
 
 if [ -n "${_CLAUDE_COLLAB_HELPERS_LOADED:-}" ]; then
+  # shellcheck disable=SC2317 # exit 0 is intentional fallback: return succeeds when sourced, exit 0 when executed directly
   return 0 2>/dev/null || exit 0
 fi
 _CLAUDE_COLLAB_HELPERS_LOADED=1
