@@ -21,6 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Shellcheck
+        run: shellcheck --source-path=SCRIPTDIR -x scripts/*.sh hooks/*.sh skills/claude-collab/scripts/*.sh
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'

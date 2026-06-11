@@ -8,6 +8,7 @@ TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
 export CLAUDE_COLLAB_TMP_DIR="$TEST_DIR/tmp"
+# shellcheck source=claude-helpers.sh
 source "$HELPERS"
 
 test "$CLAUDE_COLLAB_PROJECT_DIR" = "$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
@@ -74,7 +75,9 @@ EOF
 
   timeout_status=0
   (
+    # shellcheck disable=SC2030 # PATH and CLAUDE_COLLAB_TIMEOUT modified for test isolation (intentional subshell env override)
     export PATH="$fake_bin:$PATH"
+    # shellcheck disable=SC2030
     export CLAUDE_COLLAB_TIMEOUT=1
     claude_run_print "$timeout_prompt" "$timeout_output"
   ) >/dev/null 2>"$timeout_stderr" || timeout_status=$?
@@ -99,6 +102,7 @@ chmod +x "$fake_bin/claude"
 review_output="$(claude_tmp_path review-output.md)"
 review_cwd="$TEST_DIR/review-cwd"
 mkdir -p "$review_cwd"
+# shellcheck disable=SC2031 # PATH modified for test isolation (intentional subshell env override)
 CLAUDE_COLLAB_PROJECT_DIR="$review_cwd" PATH="$fake_bin:$PATH" claude_run_review "$prompt_file" "$review_output" sonnet >/dev/null
 
 grep -q '<--disable-slash-commands>' "$review_output"
@@ -112,6 +116,7 @@ grep -q 'caller:codex' "$review_output"
 
 invalid_cwd_stderr="$(claude_tmp_path invalid-cwd-stderr.txt)"
 invalid_cwd_status=0
+# shellcheck disable=SC2031 # PATH modified for test isolation (intentional subshell env override)
 CLAUDE_COLLAB_PROJECT_DIR="$TEST_DIR/missing-cwd" PATH="$fake_bin:$PATH" claude_run_review "$prompt_file" "$review_output" >/dev/null 2>"$invalid_cwd_stderr" || invalid_cwd_status=$?
 test "$invalid_cwd_status" -eq 1
 grep -q 'claude working directory not found' "$invalid_cwd_stderr"
@@ -127,7 +132,9 @@ EOF
   review_timeout_stderr="$(claude_tmp_path review-timeout-stderr.txt)"
   review_timeout_status=0
   (
+    # shellcheck disable=SC2031 # PATH and CLAUDE_COLLAB_* modified for test isolation (intentional subshell env override)
     export PATH="$fake_bin:$PATH"
+    # shellcheck disable=SC2031
     export CLAUDE_COLLAB_TIMEOUT=9
     export CLAUDE_COLLAB_REVIEW_TIMEOUT=1
     claude_run_review "$prompt_file" "$review_output"

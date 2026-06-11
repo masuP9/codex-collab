@@ -22,6 +22,7 @@ echo "$COMMAND" | grep -qF 'CODEX_SKILL_CONTEXT=1' && exit 0
 PATTERN='\bcodex_[A-Za-z0-9_]+\b'
 PATTERN="$PATTERN"'|\bsource\b.*codex-helpers\.sh'
 PATTERN="$PATTERN"'|\.[ \t]+.*codex-helpers\.sh'
+# shellcheck disable=SC2016 # $HELPERS is a literal grep pattern (single-quoted intentionally, not a variable)
 PATTERN="$PATTERN"'|\$HELPERS.*codex-helpers'
 PATTERN="$PATTERN"'|HELPERS=.*codex-helpers'
 PATTERN="$PATTERN"'|\bCODEX_PROMPT\b'

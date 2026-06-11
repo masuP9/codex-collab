@@ -154,8 +154,10 @@ test_multiple_source() {
   unset _CODEX_HELPERS_LOADED
 
   # Source twice
+  # shellcheck source=codex-helpers.sh
   source "$HELPERS"
   local first_load="$_CODEX_HELPERS_LOADED"
+  # shellcheck source=codex-helpers.sh
   source "$HELPERS"
   local second_load="$_CODEX_HELPERS_LOADED"
 
@@ -178,7 +180,8 @@ test_tmp_directory() {
 
   # Use relative path for test - function should return absolute path
   local test_tmp=".test-tmp-$$"
-  local expected_abs_path="$(pwd)/$test_tmp"
+  local expected_abs_path
+  expected_abs_path="$(pwd)/$test_tmp"
   CODEX_TMP_DIR="$test_tmp"
 
   # Clean up any existing test directory

@@ -10,6 +10,7 @@
 
 # Guard against multiple sourcing
 if [ -n "${_CODEX_HELPERS_LOADED:-}" ]; then
+  # shellcheck disable=SC2317 # exit 0 is intentional fallback: return succeeds when sourced, exit 0 when executed directly
   return 0 2>/dev/null || exit 0
 fi
 _CODEX_HELPERS_LOADED=1
@@ -83,7 +84,8 @@ codex_ensure_tmp_dir() {
   # Remove leading ./ if present
   rel_dir="${rel_dir#./}"
   # Create absolute path
-  local tmp_dir="$(pwd)/${rel_dir}"
+  local tmp_dir
+  tmp_dir="$(pwd)/${rel_dir}"
   if [ ! -d "$tmp_dir" ]; then
     mkdir -p "$tmp_dir"
   fi
@@ -131,6 +133,7 @@ codex_generate_signal() {
 # Strip ANSI escape codes from text
 # Usage: clean=$(codex_strip_ansi "$text")
 #        cat file | codex_strip_ansi
+# shellcheck disable=SC2120 # function intentionally works both with arg and via pipe (no-arg stdin mode)
 codex_strip_ansi() {
   if [ $# -gt 0 ]; then
     printf '%s' "$1" | sed $'s/\033\\[[0-9;]*[a-zA-Z]//g'
@@ -232,6 +235,7 @@ codex_run_exec() {
   # Strip ANSI escape codes from output
   # pipefail ensures codex's exit code propagates through the pipe
   local exit_code=0
+  # shellcheck disable=SC2119 # codex_strip_ansi is used in pipe (stdin) mode here, not with $1
   (set -o pipefail; codex "${codex_args[@]}" < "$prompt_file" 2>&1 | codex_strip_ansi | tee "$output_file") || exit_code=$?
 
   if [ "$exit_code" -ne 0 ]; then
@@ -370,6 +374,7 @@ codex_run_review() {
   fi
 
   local exit_code=0
+  # shellcheck disable=SC2119 # codex_strip_ansi is used in pipe (stdin) mode here, not with $1
   (set -o pipefail; codex "${review_args[@]}" 2>&1 | codex_strip_ansi | tee "$output_file") || exit_code=$?
 
   # If model config caused failure, retry without it
@@ -377,6 +382,7 @@ codex_run_review() {
     codex_debug "run_review: retrying without model config (exit_code=$exit_code)"
     review_args=(review --uncommitted)
     exit_code=0
+    # shellcheck disable=SC2119 # codex_strip_ansi is used in pipe (stdin) mode here, not with $1
     (set -o pipefail; codex "${review_args[@]}" 2>&1 | codex_strip_ansi | tee "$output_file") || exit_code=$?
   fi
 
@@ -656,7 +662,9 @@ codex_load_session_state() {
   # Guards with || true to prevent set -e failures on malformed files
   SESSION_MODE=$(grep '"mode"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
   SESSION_THREAD_ID=$(grep '"threadId"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  # shellcheck disable=SC2034 # SESSION_SANDBOX is exported for use by callers that source this file
   SESSION_SANDBOX=$(grep '"sandbox"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  # shellcheck disable=SC2034 # SESSION_WORKFLOW is exported for use by callers that source this file
   SESSION_WORKFLOW=$(grep '"workflow"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
 
   # Validate minimum required fields
