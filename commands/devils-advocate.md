@@ -323,7 +323,13 @@ DEBATE_HISTORY=$(awk '/^## Debate Log$/,/^## Verdict/' "$STATE_FILE" | grep -v '
 CRITIQUE_PROMPT="$TMP_DIR/devils-advocate-critique-prompt.txt"
 
 # Source helpers for language directive
-HELPERS="${CLAUDE_PLUGIN_ROOT:-$(pwd)}/scripts/codex-helpers.sh"
+HELPERS=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh" ]; then
+  HELPERS="${CLAUDE_PLUGIN_ROOT}/scripts/codex-helpers.sh"
+elif [ -d ~/.claude/plugins/cache/codex-collab ]; then
+  HELPERS=$(ls -td ~/.claude/plugins/cache/codex-collab/codex-collab/*/scripts/codex-helpers.sh 2>/dev/null | head -1)
+fi
+[ -z "$HELPERS" ] || [ ! -f "$HELPERS" ] && HELPERS="$(pwd)/scripts/codex-helpers.sh"
 [ -f "$HELPERS" ] && source "$HELPERS"
 
 # Get language setting from config (default: en)

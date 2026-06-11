@@ -459,6 +459,7 @@ Execute the plan step by step:
 
 **0. Stage changes for Codex visibility (important!):**
 ```bash
+export CODEX_SKILL_CONTEXT=1
 git add -A
 ```
 > **Why?** Staging ensures all changes are visible to Codex regardless of its file discovery method.
@@ -832,6 +833,7 @@ IF review_round >= max_rounds AND verdict != "pass":
 
 Remove temporary files:
 ```bash
+export CODEX_SKILL_CONTEXT=1
 TMP_DIR="$(pwd)/${CODEX_TMP_DIR:-tmp}"
 rm -f "$TMP_DIR/codex-plan-output.md" "$TMP_DIR/codex-plan-prompt.txt"
 rm -f "$TMP_DIR/codex-review-output.md" "$TMP_DIR/codex-review-prompt.txt"
