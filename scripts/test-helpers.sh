@@ -1256,6 +1256,20 @@ test_plan004_hardening() {
     fail "thread anchor quoted-value" "threadD='$loaded_d5' threadB='$loaded_b5f' (expected escaped 'see \\\"threadB\\\" ref' and 'thread-B-final')"
   fi
 
+  # Sub-case: value EXACTLY equal to another thread's name — the true pre-fix bug shape.
+  # Old unanchored grep matched threadE's value delimiters (: "threadB"), so updating
+  # threadB dropped threadE (data loss) and loading threadB could return threadE's line.
+  codex_save_thread "$task5" "threadE" "threadB" > /dev/null || true
+  codex_save_thread "$task5" "threadB" "thread-B-final2" > /dev/null || true
+  local loaded_e5 loaded_b5x
+  loaded_e5=$(codex_load_thread "$task5" "threadE")
+  loaded_b5x=$(codex_load_thread "$task5" "threadB")
+  if [ "$loaded_e5" = "threadB" ] && [ "$loaded_b5x" = "thread-B-final2" ]; then
+    pass "thread anchor: value equal to another thread name survives update and loads correctly"
+  else
+    fail "thread anchor value-eq-name" "threadE='$loaded_e5' threadB='$loaded_b5x' (expected 'threadB' and 'thread-B-final2')"
+  fi
+
   # --- Case 6: codex_strip_ansi must remove OSC sequences ---
   # OSC BEL-terminated: ESC ] 0 ; title BEL
   local osc_bel
