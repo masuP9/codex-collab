@@ -136,9 +136,9 @@ codex_generate_signal() {
 # shellcheck disable=SC2120 # function intentionally works both with arg and via pipe (no-arg stdin mode)
 codex_strip_ansi() {
   if [ $# -gt 0 ]; then
-    printf '%s' "$1" | sed $'s/\033\\[[0-9;]*[a-zA-Z]//g'
+    printf '%s' "$1" | sed $'s/\033\\[[0-9;]*[a-zA-Z]//g; s/\033][^\007\033]*\007//g; s/\033][^\007\033]*\033\\\\//g'
   else
-    sed $'s/\033\\[[0-9;]*[a-zA-Z]//g'
+    sed $'s/\033\\[[0-9;]*[a-zA-Z]//g; s/\033][^\007\033]*\007//g; s/\033][^\007\033]*\033\\\\//g'
   fi
 }
 
@@ -466,7 +466,10 @@ codex_sanitize_task_id() {
 # Escape a string for safe JSON embedding (handles quotes, backslashes, newlines)
 # Usage: escaped=$(codex_json_escape "$value")
 codex_json_escape() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' '
+  printf '%s' "$1" \
+    | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g' \
+    | tr '\n' ' ' \
+    | tr -d '\000-\010\013-\037'
 }
 
 # Save session state to a JSON file (task_id-scoped for concurrent isolation)
@@ -571,7 +574,7 @@ codex_save_thread() {
   if [ -n "$existing_threads" ]; then
     # Remove existing entry for this thread name if present, and trailing comma
     local filtered
-    filtered=$(echo "$existing_threads" | grep -v "\"${esc_name}\"" || true)
+    filtered=$(echo "$existing_threads" | grep -vF "\"${esc_name}\":" || true)
     if [ -n "$filtered" ]; then
       # Ensure trailing comma on existing entries
       new_threads=$(echo "$filtered" | sed 's/[[:space:]]*$//' | sed '$ s/,*$/,/')
@@ -589,10 +592,10 @@ codex_save_thread() {
   updated_at=$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S%z)
 
   local mode sandbox workflow threadId
-  mode=$(grep '"mode"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
-  threadId=$(grep '"threadId"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
-  sandbox=$(grep '"sandbox"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
-  workflow=$(grep '"workflow"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  mode=$(grep '"mode"' "$state_file" | sed -E 's/.*: *"((\\.|[^"\\])*)".*/\1/' | head -1 || true)
+  threadId=$(grep '"threadId"' "$state_file" | sed -E 's/.*: *"((\\.|[^"\\])*)".*/\1/' | head -1 || true)
+  sandbox=$(grep '"sandbox"' "$state_file" | sed -E 's/.*: *"((\\.|[^"\\])*)".*/\1/' | head -1 || true)
+  workflow=$(grep '"workflow"' "$state_file" | sed -E 's/.*: *"((\\.|[^"\\])*)".*/\1/' | head -1 || true)
 
   cat > "$state_file" << EOJSON
 {
@@ -633,7 +636,7 @@ codex_load_thread() {
   local esc_name
   esc_name=$(codex_json_escape "$thread_name")
 
-  grep "\"${esc_name}\"" "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true
+  grep -F "\"${esc_name}\":" "$state_file" | sed -E 's/.*: *"((\\.|[^"\\])*)".*/\1/' | head -1 || true
 }
 
 # Load session state from a JSON file
@@ -660,12 +663,12 @@ codex_load_session_state() {
 
   # Parse JSON fields using grep/sed (no jq dependency)
   # Guards with || true to prevent set -e failures on malformed files
-  SESSION_MODE=$(grep '"mode"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
-  SESSION_THREAD_ID=$(grep '"threadId"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  SESSION_MODE=$(grep '"mode"' "$state_file" | sed -E 's/.*: *"((\\.|[^"\\])*)".*/\1/' | head -1 || true)
+  SESSION_THREAD_ID=$(grep '"threadId"' "$state_file" | sed -E 's/.*: *"((\\.|[^"\\])*)".*/\1/' | head -1 || true)
   # shellcheck disable=SC2034 # SESSION_SANDBOX is exported for use by callers that source this file
-  SESSION_SANDBOX=$(grep '"sandbox"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  SESSION_SANDBOX=$(grep '"sandbox"' "$state_file" | sed -E 's/.*: *"((\\.|[^"\\])*)".*/\1/' | head -1 || true)
   # shellcheck disable=SC2034 # SESSION_WORKFLOW is exported for use by callers that source this file
-  SESSION_WORKFLOW=$(grep '"workflow"' "$state_file" | sed 's/.*: *"\([^"]*\)".*/\1/' | head -1 || true)
+  SESSION_WORKFLOW=$(grep '"workflow"' "$state_file" | sed -E 's/.*: *"((\\.|[^"\\])*)".*/\1/' | head -1 || true)
 
   # Validate minimum required fields
   if [ -z "$SESSION_MODE" ]; then

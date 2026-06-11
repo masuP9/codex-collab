@@ -1158,6 +1158,119 @@ test_sanitize_and_escape() {
 }
 
 # ==============================================================================
+# Test: Plan 004 hardening — json_escape control chars, quoted values,
+#       thread name anchoring, OSC ANSI stripping
+# ==============================================================================
+test_plan004_hardening() {
+  echo ""
+  echo "=== Testing: Plan 004 hardening ==="
+
+  local orig_tmp_dir="${CODEX_TMP_DIR:-}"
+  local test_tmp=".test-tmp-plan004-$$"
+  CODEX_TMP_DIR="$test_tmp"
+  rm -rf "$test_tmp"
+
+  # --- Case 1: json_escape must not leave a raw tab in the output ---
+  local tab_result
+  tab_result=$(codex_json_escape "$(printf 'a\tb')")
+  if printf '%s' "$tab_result" | grep -qP '\t'; then
+    fail "json_escape tab" "Raw tab survived json_escape: '$tab_result'"
+  else
+    pass "json_escape: tab escaped (no raw tab)"
+  fi
+
+  # --- Case 2: json_escape must not leave a CR in the output ---
+  local cr_result
+  cr_result=$(codex_json_escape "$(printf 'a\rb')")
+  if printf '%s' "$cr_result" | grep -qP '\r'; then
+    fail "json_escape CR" "Raw CR survived json_escape: '$cr_result'"
+  else
+    pass "json_escape: CR removed (no raw CR)"
+  fi
+
+  # --- Case 3: Save/load with a workflow value containing a double-quote ---
+  #             The JSON must not be corrupted; SESSION_MODE must load correctly.
+  local task3="plan004-quoted-$$"
+  codex_save_session_state "$task3" "mcp" "thread-xyz" "read-only" 'work"flow' > /dev/null
+  SESSION_MODE="" SESSION_THREAD_ID="" SESSION_SANDBOX="" SESSION_WORKFLOW=""
+  local load_exit3=0
+  codex_load_session_state "$task3" > /dev/null 2>&1 || load_exit3=$?
+  if [ "$load_exit3" -eq 0 ] && [ "$SESSION_MODE" = "mcp" ]; then
+    pass "save/load: quoted workflow value — SESSION_MODE correct"
+  else
+    fail "save/load quoted workflow" "Expected exit 0 mode=mcp, got exit=$load_exit3 mode='$SESSION_MODE'"
+  fi
+
+  # --- Case 4: save_thread with a quoted thread value must not break the state file ---
+  local task4="plan004-thread-quote-$$"
+  codex_save_session_state "$task4" "mcp" "t-abc" "read-only" "claude-leads" > /dev/null
+  codex_save_thread "$task4" "threadB" 'value"with"quotes' > /dev/null || true
+  SESSION_MODE="" SESSION_THREAD_ID="" SESSION_SANDBOX="" SESSION_WORKFLOW=""
+  local load_exit4=0
+  codex_load_session_state "$task4" > /dev/null 2>&1 || load_exit4=$?
+  if [ "$load_exit4" -eq 0 ] && [ "$SESSION_MODE" = "mcp" ]; then
+    pass "save_thread: quoted value — state file stays valid"
+  else
+    fail "save_thread quoted value" "Expected exit 0 mode=mcp, got exit=$load_exit4 mode='$SESSION_MODE'"
+  fi
+
+  # --- Case 5: thread name anchoring — value containing another thread name must not collide ---
+  # threadC's value deliberately contains the string "threadB"
+  local task5="plan004-anchor-$$"
+  codex_save_session_state "$task5" "mcp" "t-main" "read-only" "claude-leads" > /dev/null
+  codex_save_thread "$task5" "threadB" "thread-B-123" > /dev/null || true
+  codex_save_thread "$task5" "threadC" "contains-threadB-value" > /dev/null || true
+
+  local loaded_c5 loaded_b5
+  loaded_c5=$(codex_load_thread "$task5" "threadC")
+  loaded_b5=$(codex_load_thread "$task5" "threadB")
+
+  if [ "$loaded_c5" = "contains-threadB-value" ] && [ "$loaded_b5" = "thread-B-123" ]; then
+    pass "thread anchor: threadC value containing 'threadB' does not collide"
+  else
+    fail "thread anchor" "threadB='$loaded_b5' threadC='$loaded_c5' (expected 'thread-B-123' and 'contains-threadB-value')"
+  fi
+
+  # Also check that updating threadB does not destroy threadC
+  codex_save_thread "$task5" "threadB" "thread-B-updated" > /dev/null || true
+  local loaded_b5u loaded_c5u
+  loaded_b5u=$(codex_load_thread "$task5" "threadB")
+  loaded_c5u=$(codex_load_thread "$task5" "threadC")
+  if [ "$loaded_b5u" = "thread-B-updated" ] && [ "$loaded_c5u" = "contains-threadB-value" ]; then
+    pass "thread anchor: updating threadB preserves threadC"
+  else
+    fail "thread anchor update" "threadB='$loaded_b5u' threadC='$loaded_c5u'"
+  fi
+
+  # --- Case 6: codex_strip_ansi must remove OSC sequences ---
+  # OSC BEL-terminated: ESC ] 0 ; title BEL
+  local osc_bel
+  osc_bel=$(printf '\033]0;mytitle\007plain text')
+  local result_bel
+  result_bel=$(codex_strip_ansi "$osc_bel")
+  if [ "$result_bel" = "plain text" ]; then
+    pass "strip_ansi: removes OSC BEL-terminated sequence"
+  else
+    fail "strip_ansi OSC BEL" "Expected 'plain text', got '$result_bel'"
+  fi
+
+  # OSC ST-terminated: ESC ] 0 ; title ESC backslash
+  local osc_st
+  osc_st=$(printf '\033]0;mytitle\033\\plain text')
+  local result_st
+  result_st=$(codex_strip_ansi "$osc_st")
+  if [ "$result_st" = "plain text" ]; then
+    pass "strip_ansi: removes OSC ST-terminated sequence"
+  else
+    fail "strip_ansi OSC ST" "Expected 'plain text', got '$result_st'"
+  fi
+
+  # Cleanup
+  rm -rf "$test_tmp"
+  CODEX_TMP_DIR="$orig_tmp_dir"
+}
+
+# ==============================================================================
 # Test: codex_save_thread / codex_load_thread (named threads)
 # ==============================================================================
 test_named_threads() {
@@ -1328,6 +1441,7 @@ main() {
   test_diff_tier
   test_session_state_isolation
   test_sanitize_and_escape
+  test_plan004_hardening
   test_named_threads
   test_malformed_state_file
 
