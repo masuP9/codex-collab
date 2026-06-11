@@ -95,9 +95,9 @@ check_bash_blocks() {
       bnum_display="$(printf '%d' "$((10#$bnum))")"
 
       # Syntax check
-      if ! bash -n "$bf" 2>/tmp/lint-plugin-bash-err; then
+      if ! bash -n "$bf" 2>"$tmpdir/bash-err"; then
         local err_msg
-        err_msg="$(cat /tmp/lint-plugin-bash-err)"
+        err_msg="$(cat "$tmpdir/bash-err")"
         echo "[ERROR] Syntax error in $fname block $bnum_display: $err_msg"
         ERRORS=$((ERRORS + 1))
         syntax_errors=$((syntax_errors + 1))
