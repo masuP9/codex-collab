@@ -16,6 +16,9 @@ jobs:
       - name: Run Claude collaboration helper tests
         run: bash skills/claude-collab/scripts/test-claude-helpers.sh
 
+      - name: Run hook tests
+        run: bash hooks/test-enforce-skill-usage.sh
+
   lint:
     runs-on: ubuntu-latest
     steps:
