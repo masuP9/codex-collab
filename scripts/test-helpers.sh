@@ -1173,7 +1173,7 @@ test_plan004_hardening() {
   # --- Case 1: json_escape must not leave a raw tab in the output ---
   local tab_result
   tab_result=$(codex_json_escape "$(printf 'a\tb')")
-  if printf '%s' "$tab_result" | grep -qP '\t'; then
+  if printf '%s' "$tab_result" | grep -q "$(printf '\t')"; then
     fail "json_escape tab" "Raw tab survived json_escape: '$tab_result'"
   else
     pass "json_escape: tab escaped (no raw tab)"
@@ -1182,7 +1182,7 @@ test_plan004_hardening() {
   # --- Case 2: json_escape must not leave a CR in the output ---
   local cr_result
   cr_result=$(codex_json_escape "$(printf 'a\rb')")
-  if printf '%s' "$cr_result" | grep -qP '\r'; then
+  if printf '%s' "$cr_result" | grep -q "$(printf '\r')"; then
     fail "json_escape CR" "Raw CR survived json_escape: '$cr_result'"
   else
     pass "json_escape: CR removed (no raw CR)"
@@ -1240,6 +1240,20 @@ test_plan004_hardening() {
     pass "thread anchor: updating threadB preserves threadC"
   else
     fail "thread anchor update" "threadB='$loaded_b5u' threadC='$loaded_c5u'"
+  fi
+
+  # Sub-case: value containing QUOTED "threadB" — the actual pre-fix bug shape.
+  # Stored escaped as \"threadB\", which contains the substring "threadB" that the
+  # old unanchored grep -v matched, dropping threadD when threadB was updated.
+  codex_save_thread "$task5" "threadD" 'see "threadB" ref' > /dev/null || true
+  codex_save_thread "$task5" "threadB" "thread-B-final" > /dev/null || true
+  local loaded_d5 loaded_b5f
+  loaded_d5=$(codex_load_thread "$task5" "threadD")
+  loaded_b5f=$(codex_load_thread "$task5" "threadB")
+  if [ "$loaded_d5" = 'see \"threadB\" ref' ] && [ "$loaded_b5f" = "thread-B-final" ]; then
+    pass "thread anchor: quoted 'threadB' inside threadD value survives threadB update"
+  else
+    fail "thread anchor quoted-value" "threadD='$loaded_d5' threadB='$loaded_b5f' (expected escaped 'see \\\"threadB\\\" ref' and 'thread-B-final')"
   fi
 
   # --- Case 6: codex_strip_ansi must remove OSC sequences ---
