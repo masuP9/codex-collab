@@ -134,6 +134,19 @@ Bash 使用ルールの詳細（スキルコンテキスト検出の仕組み、
 > **Note**: `hooks/enforce-skill-usage.sh` の PreToolUse フック（command型）がこのルールを強制します。
 > 新しいコマンドを作成する場合は、`export CODEX_SKILL_CONTEXT=1` を Bash ブロックの先頭に追加してください。
 
+## テスト
+
+PR 作成前に以下の両方を実行し、全テストがパスすることを確認すること。
+
+```sh
+bash scripts/test-helpers.sh                              # ヘルパー関数のユニットテスト
+bash skills/claude-collab/scripts/test-claude-helpers.sh  # claude-collab ヘルパーのテスト
+```
+
+- 純粋な bash のみで動作し、外部依存・実 codex 呼び出しはない
+- CI（`.github/workflows/ci.yml`）でも同じ 2 スイートを実行している
+- ヘルパー関数を追加・変更した場合は対応するテストを追加すること
+
 ## ヘルパースクリプトの管理
 
 `scripts/codex-helpers.sh` には、コマンド間で共有されるbash関数が定義されています。
