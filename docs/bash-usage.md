@@ -63,7 +63,7 @@ When **not** in skill context, the hook checks for these patterns to identify co
 
 | Pattern | Description | Example | Limitation |
 |---------|-------------|---------|------------|
-| `\bcodex_[A-Za-z0-9_]+\b` | Helper function calls | `codex_run_exec` | - |
+| `(^\|[;&\|]\|\$\(\|`)[[:space:]]*codex_[A-Za-z0-9_]+` | Helper function calls **at execution position** (line start, after `;` `&` `\|`, inside `$(...)` or backticks) | `codex_run_exec` | Mentions in argument text (commit messages, PR bodies, grep patterns) are allowed |
 | `\bsource\b.*codex-helpers\.sh` or `\.\s+.*codex-helpers\.sh` | Direct path sourcing (source/dot) | `source ./scripts/codex-helpers.sh` | Indirect refs not detected |
 | `\$HELPERS.*codex-helpers` or `HELPERS=.*codex-helpers` | Variable reference/definition | `HELPERS="./codex-helpers.sh"` | - |
 | `\bCODEX_PROMPT\b` | codex-collab variables | `$CODEX_PROMPT` | - |
@@ -71,7 +71,9 @@ When **not** in skill context, the hook checks for these patterns to identify co
 ### Known Limitations
 
 - **Indirect sourcing**: `source "$HELPERS"` where `HELPERS` is set elsewhere may not be detected
-- **Pattern matching**: Uses word boundaries (`\b`) to avoid false positives, but edge cases may exist
+- **Heredoc false positives**: If a heredoc body has a helper function name at line start, it may trigger a false positive (the anchor matches line-start text regardless of context)
+- **`HELPERS=` pattern**: The `HELPERS=.*codex-helpers` pattern matches anywhere in the command string, including inside message text. No real incidents observed; current behavior is maintained
+- **Indirect execution**: Patterns like `env codex_x` or `bash -c 'codex_x ...'` are not detected — this is an accepted tradeoff in the fail-open design
 
 ## What Happens When Blocked
 

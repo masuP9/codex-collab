@@ -19,7 +19,7 @@ COMMAND=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 echo "$COMMAND" | grep -qF 'CODEX_SKILL_CONTEXT=1' && exit 0
 
 # Check for codex-collab patterns
-PATTERN='\bcodex_[A-Za-z0-9_]+\b'
+PATTERN='(^|[;&|]|\$\(|`)[[:space:]]*codex_[A-Za-z0-9_]+'
 PATTERN="$PATTERN"'|\bsource\b.*codex-helpers\.sh'
 PATTERN="$PATTERN"'|\.[ \t]+.*codex-helpers\.sh'
 # shellcheck disable=SC2016 # $HELPERS is a literal grep pattern (single-quoted intentionally, not a variable)
