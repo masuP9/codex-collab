@@ -1,7 +1,13 @@
 # コードベース簡素化計画
 
 Created: 2026-02-03
-Status: 計画立案完了（実装待ち）
+Status: 完了（v0.26.0〜v0.29.0 で実施済み — 本文書はアーカイブ）
+
+> **2026-06 追記**: 本計画が対象としていた tmux ベースの旧アーキテクチャ
+> （codex-helpers.sh 2,687行/67関数、collab-codex-attach.md）は、
+> v0.26.0 の codex exec 移行（7b3fe2e）と collab-codex-attach 削除
+> （c30d9b6）で除去済み。現行の codex-helpers.sh は 734行/24関数で、
+> 本文書の調査結果は現在のコードベースには当てはまらない。
 
 ## 概要
 
