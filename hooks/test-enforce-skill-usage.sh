@@ -140,17 +140,72 @@ else
   fail "case 10: plain 'codex exec' (no codex_ prefix) is allowed" "expected exit 0, got $result"
 fi
 
-# Case 11: gh pr create with a function name in the title argument — blocked (exit 2)
-# NOTE: 既知の誤検知を固定化（パターン改善時はこの期待値を 0 に変える）
-# The pattern \bcodex_[A-Za-z0-9_]+\b matches function names in argument text, not just
-# direct calls. Real incident: gh pr create --body "..." containing codex_strip_ansi was
-# blocked during PR #56 (2026-06-12). Workaround was --body-file. Pattern fix is out of
-# scope for this plan.
+# Case 11: gh pr create with a function name in the title argument — allowed (exit 0)
+# NOTE: パターン改善（Plan 006）により引数テキスト中の言及は許可される。
+# The pattern now anchors to execution positions (line start, after ; & |, inside $(...) or backticks),
+# so function names appearing only in argument text (commit messages, PR bodies, grep patterns)
+# are no longer blocked. Real incident: gh pr create --body "..." containing a function name
+# was blocked during PR #56 (2026-06-12). This is now correctly allowed.
 result=$(run_hook 'gh pr create --body-file body.md --title "fix codex_strip_ansi"')
-if [ "$result" = "2" ]; then
-  pass "case 11: function name in gh pr title triggers block (known false positive, characterization)"
+if [ "$result" = "0" ]; then
+  pass "case 11: function name in gh pr title is allowed (false positive fixed)"
 else
-  fail "case 11: function name in gh pr title triggers block (known false positive, characterization)" "expected exit 2, got $result"
+  fail "case 11: function name in gh pr title is allowed (false positive fixed)" "expected exit 0, got $result"
+fi
+
+# Case 12: git commit with function name in message — allowed (exit 0)
+# Incident 3 reproduction: commit messages mentioning helper names should not be blocked.
+result=$(run_hook 'git commit -m "fix: harden codex_json_escape handling"')
+if [ "$result" = "0" ]; then
+  pass "case 12: function name in git commit message is allowed"
+else
+  fail "case 12: function name in git commit message is allowed" "expected exit 0, got $result"
+fi
+
+# Case 13: grep for function name in source file — allowed (exit 0)
+# Incident 2 reproduction: grepping for a helper name should not be blocked.
+result=$(run_hook "grep -n 'codex_json_escape()' scripts/codex-helpers.sh")
+if [ "$result" = "0" ]; then
+  pass "case 13: function name in grep pattern is allowed"
+else
+  fail "case 13: function name in grep pattern is allowed" "expected exit 0, got $result"
+fi
+
+# Case 14: command substitution with helper call — blocked (exit 2)
+# Execution inside $(...) must still be detected.
+# shellcheck disable=SC2016 # literal command string for the hook (single-quoted intentionally, $(...) must not expand)
+result=$(run_hook 'v=$(codex_run_exec x)')
+if [ "$result" = "2" ]; then
+  pass "case 14: helper call inside command substitution is blocked"
+else
+  fail "case 14: helper call inside command substitution is blocked" "expected exit 2, got $result"
+fi
+
+# Case 15: helper call after && — blocked (exit 2)
+# Execution after logical-and operator must still be detected.
+result=$(run_hook 'true && codex_run_exec x')
+if [ "$result" = "2" ]; then
+  pass "case 15: helper call after && is blocked"
+else
+  fail "case 15: helper call after && is blocked" "expected exit 2, got $result"
+fi
+
+# Case 16: helper call as pipe target — blocked (exit 2)
+# Execution as a pipeline target must still be detected.
+result=$(run_hook 'cat out.txt | codex_strip_ansi')
+if [ "$result" = "2" ]; then
+  pass "case 16: helper call as pipe target is blocked"
+else
+  fail "case 16: helper call as pipe target is blocked" "expected exit 2, got $result"
+fi
+
+# Case 17: multiline command with helper on second line — blocked (exit 2)
+# Line-start anchor must fire on each line of a multiline command.
+result=$(run_hook "$(printf 'echo start\ncodex_run_exec x')")
+if [ "$result" = "2" ]; then
+  pass "case 17: helper call at line start in multiline command is blocked"
+else
+  fail "case 17: helper call at line start in multiline command is blocked" "expected exit 2, got $result"
 fi
 
 # ==============================================================================
