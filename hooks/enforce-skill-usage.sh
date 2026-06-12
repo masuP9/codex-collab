@@ -15,26 +15,27 @@ command -v jq &>/dev/null || exit 0
 COMMAND=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 [ -z "$COMMAND" ] && exit 0
 
-# Skill context marker — allow everything
-echo "$COMMAND" | grep -qF 'CODEX_SKILL_CONTEXT=1' && exit 0
+# Skill context marker — soft guard opt-in, only honored at line start
+echo "$COMMAND" | grep -qE '^[[:space:]]*export[[:space:]]+CODEX_SKILL_CONTEXT=1' && exit 0
 
-# Check for codex-collab patterns
-PATTERN='(^|[;&|]|\$\(|`)[[:space:]]*codex_[A-Za-z0-9_]+'
-PATTERN="$PATTERN"'|\bsource\b.*codex-helpers\.sh'
-PATTERN="$PATTERN"'|\.[ \t]+.*codex-helpers\.sh'
-# shellcheck disable=SC2016 # $HELPERS is a literal grep pattern (single-quoted intentionally, not a variable)
-PATTERN="$PATTERN"'|\$HELPERS.*codex-helpers'
-PATTERN="$PATTERN"'|HELPERS=.*codex-helpers'
-PATTERN="$PATTERN"'|\bCODEX_PROMPT\b'
+# Soft guard: only side-effect helpers (external execution / review / session-state writes).
+# Pure transforms (codex_strip_ansi etc.) and speculative sourcing/variable patterns
+# are intentionally NOT guarded — see docs/bash-usage.md "Sunset criteria".
+PATTERN='(^|[;&|]|\$\(|`)[[:space:]]*codex_(run_exec|run_review|save_session_state|save_thread)\b'
 
 if echo "$COMMAND" | grep -qE "$PATTERN"; then
   cat >&2 << 'MSG'
-This Bash command uses codex-collab helper functions directly.
+This command calls a codex-collab side-effect helper directly
+(codex_run_exec / codex_run_review / codex_save_session_state / codex_save_thread).
 
-Use the appropriate skill instead:
+This is a soft guard against accidental direct use of internal APIs,
+not a security boundary. Preferred entry points:
 - /codex-collab [task] - Start collaboration
 - /strong-inference [problem] - Investigate problems
 - /devils-advocate [proposal] - Stress-test designs
+
+If you are doing this intentionally, start the line with:
+  export CODEX_SKILL_CONTEXT=1; <your command>
 
 See docs/bash-usage.md for details.
 MSG
