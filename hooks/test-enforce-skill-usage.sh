@@ -173,6 +173,7 @@ fi
 
 # Case 14: command substitution with helper call — blocked (exit 2)
 # Execution inside $(...) must still be detected.
+# shellcheck disable=SC2016 # literal command string for the hook (single-quoted intentionally, $(...) must not expand)
 result=$(run_hook 'v=$(codex_run_exec x)')
 if [ "$result" = "2" ]; then
   pass "case 14: helper call inside command substitution is blocked"
