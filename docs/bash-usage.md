@@ -32,7 +32,7 @@ The PreToolUse hook (`hooks/enforce-skill-usage.sh`) detects skill context using
 
 ### Primary Method (Reliable)
 
-Check if the Bash command includes `export CODEX_SKILL_CONTEXT=1`.
+Check if the Bash command contains a line starting with `export CODEX_SKILL_CONTEXT=1` (substring mentions are ignored — only a line-start export is honored).
 
 All codex-collab skills set this environment variable at the beginning of their Bash blocks:
 
@@ -51,7 +51,7 @@ fi
 [ -f "$HELPERS" ] && source "$HELPERS"
 ```
 
-When this marker is present, all Bash commands are allowed without blocking.
+When this marker is present on a line by itself (with optional leading whitespace), all Bash commands are allowed without blocking. Quoting the string inside an `echo` or assigning it to a variable does **not** trigger the bypass.
 
 ### Note on jq Dependency
 
@@ -61,31 +61,43 @@ The hook script requires `jq` to parse the JSON input from Claude Code. If `jq` 
 
 When **not** in skill context, the hook checks for these patterns to identify codex-collab operations:
 
-| Pattern | Description | Example | Limitation |
-|---------|-------------|---------|------------|
-| `(^\|[;&\|]\|\$\(\|`)[[:space:]]*codex_[A-Za-z0-9_]+` | Helper function calls **at execution position** (line start, after `;` `&` `\|`, inside `$(...)` or backticks) | `codex_run_exec` | Mentions in argument text (commit messages, PR bodies, grep patterns) are allowed |
-| `\bsource\b.*codex-helpers\.sh` or `\.\s+.*codex-helpers\.sh` | Direct path sourcing (source/dot) | `source ./scripts/codex-helpers.sh` | Indirect refs not detected |
-| `\$HELPERS.*codex-helpers` or `HELPERS=.*codex-helpers` | Variable reference/definition | `HELPERS="./codex-helpers.sh"` | - |
-| `\bCODEX_PROMPT\b` | codex-collab variables | `$CODEX_PROMPT` | - |
+| Pattern | Description | Limitation |
+|---------|-------------|------------|
+| `(^\|[;&\|]\|\$\(\|`)[[:space:]]*codex_(run_exec\|run_review\|save_session_state\|save_thread)\b` | Side-effect helper calls at execution position (external execution / review / session-state writes) | Pure transforms and mentions in argument text are allowed |
 
 ### Known Limitations
 
-- **Indirect sourcing**: `source "$HELPERS"` where `HELPERS` is set elsewhere may not be detected
-- **Heredoc false positives**: If a heredoc body has a helper function name at line start, it may trigger a false positive (the anchor matches line-start text regardless of context)
-- **`HELPERS=` pattern**: The `HELPERS=.*codex-helpers` pattern matches anywhere in the command string, including inside message text. No real incidents observed; current behavior is maintained
-- **Indirect execution**: Patterns like `env codex_x` or `bash -c 'codex_x ...'` are not detected — this is an accepted tradeoff in the fail-open design
+- **Indirect execution**: Patterns like `bash -c 'codex_run_exec ...'` or `env codex_run_exec ...` are not detected — this is an accepted tradeoff in the fail-open design
+- **Heredoc false positives**: If a heredoc body has a guarded helper name at line start, it may trigger a false positive (the anchor matches line-start text regardless of heredoc context)
+- **Pure transforms intentionally unguarded**: `codex_strip_ansi`, `codex_infer_verdict`, `codex_extract_review_findings`, and other read-only/transform helpers are intentionally **not** guarded — adding them would increase false positives with no safety benefit
+- **Source/HELPERS=/CODEX_PROMPT intentionally unguarded**: These speculative patterns have been removed as they were outside the scope of the soft guard's purpose (see "Sunset criteria" below)
+
+### Sunset criteria
+
+This hook is a soft guard, not a security boundary. Consider removing it entirely if any of the following is observed:
+
+1. Repeated false positives that cannot be fixed without broadening exceptions
+2. Multiple recorded blocks that all end with mechanical marker-prepending rather than skill adoption
+3. Maintenance work continues with no recorded examples of the hook successfully guiding a user to a skill
+
+When the hook blocks a command, record the real incident in a PR or issue (manual log — no permanent instrumentation). If the criteria above accumulate, open a plan to remove the hook entirely.
 
 ## What Happens When Blocked
 
-If you try to execute codex-collab operations outside a skill context, you'll see a message like:
+If you try to execute a codex-collab side-effect helper outside a skill context, you'll see a message like:
 
 ```
-This Bash command uses codex-collab helper functions directly.
+This command calls a codex-collab side-effect helper directly
+(codex_run_exec / codex_run_review / codex_save_session_state / codex_save_thread).
 
-Use the appropriate skill instead:
+This is a soft guard against accidental direct use of internal APIs,
+not a security boundary. Preferred entry points:
 - /codex-collab [task] - Start collaboration
 - /strong-inference [problem] - Investigate problems
 - /devils-advocate [proposal] - Stress-test designs
+
+If you are doing this intentionally, start the line with:
+  export CODEX_SKILL_CONTEXT=1; <your command>
 
 See docs/bash-usage.md for details.
 ```
@@ -98,10 +110,10 @@ You're trying to execute codex-collab Bash commands directly instead of through 
 
 ### "I need to run a custom command"
 
-If you need to run custom commands that use codex-collab helpers:
+If you need to run custom commands that use codex-collab side-effect helpers:
 
 1. **Recommended**: Create a new skill or modify an existing one
-2. **Workaround**: Ensure your command includes `export CODEX_SKILL_CONTEXT=1` at the beginning
+2. **Workaround**: Start the command (or its first line) with `export CODEX_SKILL_CONTEXT=1` — placing it in a quoted string or after an `echo` is not sufficient; it must be an actual line-start export
 
 ### "The hook is blocking legitimate commands"
 
