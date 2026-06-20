@@ -46,8 +46,18 @@ These are non-negotiable; they are what make the loop work rather than perform t
 3. **The arbiter is mandatory.** Without a third role, a partially-falsified prediction gets quietly recorded as "partial support." The arbiter exists to force the question: *where did the hypothesis over- or under-reach?*
 4. **Independence beats agreement.** Assign the inductive test to a different model than the hypothesis author. A confirming result from the same author is weak; a counterexample from an independent verifier is strong.
 5. **Converge, don't exhaust.** Stop when H′ stops changing materially, not at a fixed round count.
+6. **In the `--abduce` variant, preserve independence structurally (Codex authors *and* tests).** Four guards make this honest: (a) **Predictions are Claude's** — the believer does not design the test. (b) **Arbitration is Claude's, with a mandatory disk recompute** — the believer does not grade the result; the arbiter re-measures from disk (full, or sampled with recorded method/tolerance). (c) **Thread isolation** — induction runs on a *fresh* thread that receives only the confirmed H, Claude's predictions, and the corpus rule, never the abduction thread's candidates/rationale (no context contamination). (d) **In-sample honesty** — if H is abduced from the same corpus it is tested on, that is discovery=validation fit; mark `evidence_scope: exploratory_in_sample` and recommend a holdout/fresh corpus for confirmatory strength.
 
 ## Workflow Phases
+
+### Phase 0: Abduction (Codex) — `--abduce` variant only
+
+Skipped in the default variant (the user/Claude supplies the hypothesis). When `--abduce` is set, Codex generates the hypothesis from the corpus, in two sub-stages on a **dedicated abduction thread**:
+
+1. **Candidate generation** — Codex re-reads the corpus from disk and proposes **multiple competing candidate hypotheses**, each with the observations that suggest it, an alternative explanation, and a discriminating measure hint. (A single hypothesis is rejected — it invites premature fixation.)
+2. **Selection** — Claude (or the user, via a prompt) picks one candidate as the confirmed hypothesis **H**, which feeds Phase 1+.
+
+The abduction thread is kept **separate** from the later induction thread (see Design principle #6).
 
 ### Phase 1: Claim Definition
 
@@ -107,17 +117,21 @@ Summarize: final hypothesis H_final, the prediction scorecard, the key counterex
 
 ## Role Distribution
 
-| Mode | Hypothesis + Predictions (deductive) | Empirical Test (inductive) | Arbitration |
-|------|--------------------------------------|----------------------------|-------------|
-| `codex` | Claude | **Codex** (independent, read-only, grounded) | Claude |
-| `claude-only` | Claude | Claude (must still script over real corpus) | Claude |
+| Variant / Mode | Hypothesis (abduction) | Predictions (deductive) | Empirical Test (inductive) | Arbitration |
+|------|------|------|------|------|
+| default · `codex` | user / Claude | Claude | **Codex** (independent, read-only, grounded) | Claude |
+| default · `claude-only` | user / Claude | Claude | Claude (must still script over real corpus) | Claude |
+| **`--abduce`** (codex only) | **Codex** (from corpus) | Claude | **Codex** (separate thread) | Claude (+ mandatory disk recompute) |
 
 - **Default mode**: `codex` (independence is the design goal; fall back automatically if Codex unavailable).
 - **Optional**: `--rotate` swaps deductive/inductive authorship between rounds to further reduce single-model bias.
+- **`--abduce` (abduction variant)**: Codex *generates* the hypothesis from the corpus (abduction), Claude derives predictions and arbitrates. This removes the default variant's weakness — that Claude grades its own hypothesis — by making author (Codex) ≠ arbiter (Claude). Requires `mode = codex`; incompatible with `--mode claude-only` and `--rotate` (both error). See **Design principles #6** for the independence guards that keep "Codex authors *and* tests" honest.
 
 ## State File
 
 Loop state is persisted to `tmp/dialectic-loop/<task-id>.md`:
+
+Default variant uses `dialectic-loop/v1`; the `--abduce` variant uses `dialectic-loop/v2`, which **adds optional fields** (a v1 file is read as `variant: default` with the new fields absent — fully backward compatible).
 
 ```yaml
 ---
@@ -132,6 +146,29 @@ max_rounds: 3
 status: in_progress
 confidence: pending
 ---
+```
+
+**`dialectic-loop/v2` (abduction variant)** — superset of v1 with the added fields below. Shown at **creation time** (Phase 0 not yet run); comments note how each field advances:
+
+```yaml
+---
+schema: dialectic-loop/v2
+variant: codex-abduction          # default | codex-abduction
+roles: "abduction=Codex, deduction=Claude, induction=Codex, arbitration=Claude"
+phase: abduction                  # abduction → deductive → inductive → arbitration → report
+original_claim: ""                # user-supplied claim if any (else empty — Codex abduces)
+confirmed_hypothesis: ""          # set in Phase 0b (selection)
+abduction_status: pending         # pending → done (set AFTER candidates persisted)
+hypothesis_status: pending        # pending → confirmed (after Phase 0b)
+abduction_thread_id: ""           # set in Phase 0a (empty/bash-exec in Bash mode)
+induction_thread_id: ""           # set in Phase 3 — MUST differ from abduction_thread_id
+confidence: pending               # → low | medium | high (Phase 4)
+evidence_scope: pending           # → confirmatory | exploratory_in_sample (Phase 4)
+claim: ""                         # v2: mirrors confirmed_hypothesis once Phase 0b selects it (empty before); original_claim holds the user seed
+# ...plus the remaining v1 fields (task_id, created, corpus, mode, round, max_rounds, status)
+---
+
+# ...candidates are persisted under a `## Abduction` / `### Candidates` section in the body.
 
 # Dialectic Loop: <claim>
 
@@ -161,6 +198,7 @@ confidence: pending
 - The inductive role must **re-read from disk** and **script over large corpora** (no raw-dump reading, no cached content).
 - Confirm before any file modification (this skill is analytical; writes are limited to the state file and the final report).
 - Set per-delegation timeout: `min(wait_timeout + 60, 600) * 1000` ms for `codex exec`.
+- **Abduction variant only:** the arbiter's disk recompute is **mandatory** (not optional); the induction thread must be **distinct** from the abduction thread; and on Codex failure, never silently fall back to claude-only (would break author≠verifier — see command Error Handling).
 
 ## Output Format
 
@@ -213,6 +251,9 @@ Use the `/dialectic-loop` command:
 # Rotate authorship to reduce bias
 /dialectic-loop --rotate "Codebase favors composition over inheritance"
 
+# Abduction variant — let Codex generate the hypothesis from the corpus (claim optional)
+/dialectic-loop --abduce --corpus "scripts/**/*.sh"
+
 # Japanese
 /dialectic-loop 「この傾向分析の仮説をログで検証して精緻化して」
 ```
@@ -227,14 +268,20 @@ If compacted mid-loop:
 
 | State | Resume at |
 |-------|-----------|
+| `variant: codex-abduction`, `abduction_status` ≠ done | Phase 0a (regenerate candidates, new abduction thread) |
+| candidates present, `hypothesis_status` ≠ confirmed | Phase 0b (selection) |
+| H confirmed, no predictions | Phase 2 (Deductive) |
 | predictions present, no evidence | Phase 3 (Inductive) |
 | evidence present, no arbitration | Phase 4 (Arbitration) |
 | arbitration present, H′ changed, rounds remain | Phase 2 (next round) |
 | H′ converged or max_rounds reached | Phase 6 (Report) |
 
+**Thread recovery (abduction variant):** if `abduction_thread_id` is lost but candidates are recorded, do not regenerate it; if `induction_thread_id` is lost mid-loop, start a fresh induction thread from the current round's H + predictions + corpus rule and recompute that round (never reuse the abduction thread).
+
 ## References
 
 Detailed templates in `references/`:
 
+- **`abduction-template.md`** — the prompt handed to Codex in the `--abduce` variant's Phase 0 to generate competing candidate hypotheses from the corpus.
 - **`prediction-template.md`** — structure for the deductive role's falsifiable predictions.
 - **`induction-verification-template.md`** — the prompt handed to the inductive role (Codex), including the counterexample-hunting mandate.

@@ -77,8 +77,25 @@ mcp__codex__codex(
 )
 ```
 
-For round 2+, continue the same thread with `mcp__codex__codex-reply(threadId, prompt)`
+For round 2+, continue the same **induction** thread with `mcp__codex__codex-reply(threadId, prompt)`
 so the inductive role retains the prior round's measurements.
+
+## Abduction variant (`--abduce`) note
+
+When the hypothesis was abduced by Codex (Phase 0), the inductive role still runs here as an
+independent test — but with the following extra rules:
+
+- **Fresh, isolated thread.** Start the induction on a thread **distinct** from the abduction
+  thread. Pass only the confirmed H, the predictions, and the corpus rule — **do not** reveal
+  that Codex authored H, nor the abduction thread's candidates/rationale/confidence. The
+  verifier should test H on its merits, blind to its origin.
+- **Origin-neutral wording.** Replace the template's opening line ("The deductive role (another
+  model) authored a hypothesis and predictions") with an origin-neutral one, e.g.
+  *"The hypothesis (H) and predictions below were prepared outside this thread."* Do not assert
+  who authored H (Codex authored it in this variant; saying "another model" would be false).
+- **Round 2+ continues the induction thread only** (never the abduction thread).
+- The arbiter's disk recompute is mandatory in this variant, and same-corpus discovery→validation
+  is marked `evidence_scope: exploratory_in_sample`.
 
 ## Quality bar
 
