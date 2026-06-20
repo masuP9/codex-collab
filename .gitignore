@@ -12,3 +12,6 @@
 
 # Project-specific codex-collab settings (use .example as template)
 .claude/codex-collab.local.md
+
+# Agent worktree isolation (volatile, machine-specific)
+.claude/worktrees/
