@@ -90,7 +90,9 @@ codex-collab/
 │   ├── codex-collab.md        # /codex-collab コマンド
 │   ├── collab-planning.md     # /collab-planning コマンド
 │   ├── strong-inference.md    # /strong-inference コマンド
-│   └── devils-advocate.md     # /devils-advocate コマンド
+│   ├── devils-advocate.md     # /devils-advocate コマンド
+│   ├── dialectic-loop.md      # /dialectic-loop コマンド
+│   └── contradiction-lift.md  # /contradiction-lift コマンド
 ├── hooks/
 │   ├── enforce-skill-usage.sh # PreToolUse フック（スキル経由強制）
 │   └── enforce-skill-usage.md # フック設定ドキュメント
@@ -109,8 +111,12 @@ codex-collab/
     │   └── references/        # 計画テンプレート・レビュー基準
     ├── strong-inference/
     │   └── references/        # 仮説テンプレート
-    └── devils-advocate/
-        └── references/        # 評価基準・批評テンプレート
+    ├── devils-advocate/
+    │   └── references/        # 評価基準・批評テンプレート
+    ├── dialectic-loop/
+    │   └── references/        # 予測・帰納検証・アブダクションテンプレート
+    └── contradiction-lift/
+        └── references/        # 封緘解・矛盾マップ・止揚監査テンプレート
 ```
 
 ### ヘルパースクリプト
@@ -230,6 +236,39 @@ Devil's Advocate（悪魔の代弁者）メソッドを使って、設計案や�
 - codexモードではCodexがRed Team、ClaudeがBlue Team
 - 議論ログを `tmp/devils-advocate/` に保存
 
+### `/dialectic-loop` コマンド
+
+経験的な主張を Peirce の探究サイクル（演繹→帰納→仲裁）で現物データに照らして検証・精緻化します。
+
+```
+# 主張を corpus で検証
+/dialectic-loop "このコードベースは合成を継承より好む" --corpus "src/**/*.ts"
+
+# Codex に仮説生成から任せる（アブダクション variant）
+/dialectic-loop --abduce --corpus "scripts/**/*.sh"
+```
+
+**特徴:**
+- 演繹役（Claude）が反証可能な予測、帰納役（Codex, 独立）が現物コーパスをスクリプト集計＋反例探索、仲裁役（Claude）がスコアカードで H′ に更新
+- `--abduce` で仮説生成自体を Codex に委譲（著者≠仲裁の独立性）
+- 出力は「更新された仮説 H′ ＋ confidence ＋ 元の枠組みが見落とした点」
+- ループログを `tmp/dialectic-loop/` に保存
+
+### `/contradiction-lift` コマンド
+
+Claude と Codex に**同じ問いを独立に解かせ**、答えの食い違いを止揚（アウフヘーベン）します。平均でも折衷でもなく、両者の真理契機を保存したまま一段高い枠へ。
+
+```
+# 実行で決着しない設計/価値の二択を止揚
+/contradiction-lift "ループは段数固定か収束検知か"
+```
+
+**特徴:**
+- 状態機械: contract → sealed → mapped → adjudicated → preserved → lifted → accepted | aporia | no_material_divergence
+- 立場を事前割当せず、独立解の食い違いから矛盾を立ち上げる（devils-advocate の外部反対役とは逆）
+- 出力は**選択機構 `f(C)→A|B|N`** か **正直なアポリア**（偽の総合に逃げない）
+- 経験的に決着する対立は Codex 実行へ routing。ログを `tmp/contradiction-lift/` に保存
+
 ### スキルの自動起動
 
 以下のようなリクエストで自動的にスキルが有効になります:
@@ -242,48 +281,60 @@ Devil's Advocate（悪魔の代弁者）メソッドを使って、設計案や�
 - 「仮説を立てて検証して」（Strong Inferenceスキル）
 - 「この設計を批判的にレビューして」（Devil's Advocateスキル）
 - 「反論をもらいたい」（Devil's Advocateスキル）
+- 「この傾向分析の仮説をデータで検証して精緻化して」（Dialectic Loopスキル）
+- 「主張を現物で裏取りしたい」「演繹と帰納で検証」（Dialectic Loopスキル）
+- 「2つの案が食い違う、平均でなく止揚したい」（Contradiction Liftスキル）
+- 「独立案を統合」「矛盾を止揚」「アウフヘーベン」（Contradiction Liftスキル）
 
 ### スキルの使い分け
 
-4つのスキルは目的が異なります。以下のガイドを参考にしてください。
+スキルは目的が異なります。**多くの場合、スキル名を覚える必要はありません**——やりたいことを自然文で書けば、内容から適切なスキルが自動的に起動します（上記「スキルの自動起動」）。能動的に選びたいとき・迷うときは、以下のガイドを参照してください。
 
-#### ユースケース別の推奨スキル
+スキルは大きく **実行系**（実装/計画）と **分析系**（思考フレームワーク）に分かれます。
 
-| ユースケース | 推奨スキル | 理由 |
-|-------------|-----------|------|
-| 実装前の計画策定 | `/collab-planning` | 計画のみに集中、実装は起動しない |
-| 大規模タスクの分解 | `/collab-planning` | WBS で作業を構造化 |
-| バグの原因調査 | `/strong-inference` | 競合仮説を立て、実験で排除 |
-| パフォーマンス問題の調査 | `/strong-inference` | 原因を絞り込む検証が必要 |
-| なぜ動かないか分からない | `/strong-inference` | 未知の原因を特定する |
-| 設計案のレビュー | `/devils-advocate` | 反論を通じて弱点を発見 |
-| アーキテクチャ決定の検証 | `/devils-advocate` | 議論で合意形成 |
-| リスク評価 | `/devils-advocate` | 批判的視点で穴を見つける |
-| 中小タスクの計画〜実装〜レビュー | `/codex-collab` | 一気通貫の完全サイクル |
-| PRのコードレビュー | `/codex-collab` | 実装済みコードの品質確認 |
+#### 実行系
+
+| スキル | 目的 |
+|--------|------|
+| `/codex-collab` | 計画〜実装〜レビューの完全サイクル（中小タスク、PR レビュー） |
+| `/collab-planning` | 計画のみ（成果物は計画文書、実装は起動しない） |
+| `claude-collab` | Codex 側から Claude を read-only の相談役として呼ぶ（Codex で使用） |
+
+#### 分析系（思考フレームワーク）— ここが一番迷いやすい
+
+| スキル | いつ使うか | 矛盾の出所 | 出力 |
+|--------|-----------|-----------|------|
+| `/strong-inference` | **未知の原因**を究明（バグ/デバッグ） | 競合仮説 | 根本原因＋証拠 |
+| `/devils-advocate` | **1つの提案**を反証でストレステスト | 外から割り当てた反対役 | APPROVE/CONDITIONAL/REJECT |
+| `/dialectic-loop` | **経験的主張**を現物データで検証・精緻化 | 予測 vs 現物の証拠 | 更新された仮説 H′＋confidence |
+| `/contradiction-lift` | **独立した2つの解**の食い違いを止揚 | 独立解から自然に立ち上がる | 選択機構 or 正直なアポリア |
 
 #### 判断が難しいケース
 
 **「計画を立てたい」と言われたら？**
-- 計画のみが目的 → `/collab-planning`（計画文書を成果物として出力）
-- 計画 + 実装まで → `/codex-collab`（計画後に実装・レビューへ進行）
+- 計画のみが目的 → `/collab-planning`
+- 計画 + 実装まで → `/codex-collab`
 
-**「仮説を検証したい」と言われたら？**
-- 原因不明の問題 → `/strong-inference`（実験で仮説を排除）
-- 設計案の妥当性 → `/devils-advocate`（議論で仮説を強化）
-
-**「レビューしてほしい」と言われたら？**
+**「検証/レビューしたい」と言われたら？**
 - 実装済みコード → `/codex-collab`（品質チェック）
-- 設計案・提案 → `/devils-advocate`（批判的検証）
-- 実装計画 → `/collab-planning`（Codex に計画をレビューしてもらう）
+- 原因不明の問題（なぜ動かない） → `/strong-inference`（実験で仮説を排除）
+- 1つの設計案の妥当性 → `/devils-advocate`（反論で弱点を発見）
+- 主張やトレンドが現物データと合うか → `/dialectic-loop`（演繹→帰納→仲裁で精緻化）
+- 実装計画 → `/collab-planning`（Codex にレビューしてもらう）
+
+**「2つの案で迷っている」と言われたら？**
+- どちらか1案を叩いて弱点を見たい → `/devils-advocate`
+- 両方が良くて食い違う、平均でなく一段上で統合したい → `/contradiction-lift`
 
 #### 簡単な見分け方
 
 ```
-「計画だけ作りたい」 → /collab-planning
-「なぜ？」「原因は？」 → /strong-inference
-「これで良いか？」「弱点は？」 → /devils-advocate
-「実装をチェック」「実装して」 → /codex-collab
+「計画だけ作りたい」              → /collab-planning
+「実装して」「実装をチェック」      → /codex-collab
+「なぜ？」「原因は？」（未知の原因） → /strong-inference
+「これで良いか？」「弱点は？」      → /devils-advocate
+「主張をデータで検証/精緻化」      → /dialectic-loop
+「2つの良い案を平均でなく止揚」    → /contradiction-lift
 ```
 
 ## 設定
