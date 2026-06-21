@@ -120,10 +120,14 @@ codex-collab のヘルパー関数を直接 Bash で実行すると、承認プ�
 
 | 目的 | 使用するスキル |
 |------|---------------|
-| 協調タスク開始 | `/codex-collab [task]` |
-| 協調計画作成 | `/collab-planning [idea]` |
-| 問題調査 | `/strong-inference [problem]` |
-| 設計検証 | `/devils-advocate [proposal]` |
+| 協調タスク開始（計画〜実装〜レビュー） | `/codex-collab [task]` |
+| 計画のみ作成 | `/collab-planning [idea]` |
+| 未知の原因を究明（バグ/デバッグ） | `/strong-inference [problem]` |
+| 設計案を反証でストレステスト | `/devils-advocate [proposal]` |
+| 経験的主張をデータで検証・精緻化 | `/dialectic-loop [claim]` |
+| 競合する2解を平均でなく止揚 | `/contradiction-lift [question]` |
+
+> 分析系の使い分け: **strong-inference**=未知の原因、**devils-advocate**=1つの提案を外から叩く、**dialectic-loop**=主張×現物データ、**contradiction-lift**=独立した2解の食い違いを止揚。詳細な選択ガイドは README「スキルの使い分け」。
 
 ### 詳細ドキュメント
 
