@@ -118,7 +118,7 @@ Route each disagreement and append `## Adjudication`:
 - **constraint** → check against the Decision Contract.
 - **normative / unobservable-causal** → carry forward to Preservation.
 
-If there are **no empirical disagreements** to run, set `empirical_arbiter: not_applicable` (not `pending`). Set `state: adjudicated`.
+If there are **no empirical disagreements** to run, set `empirical_arbiter: not_applicable` (not `pending`). If an empirical disagreement **exists but its discriminating experiment cannot be run this session** (e.g., no benchmark/corpus available), still **pre-register** the experiment ("if X → A, if Y → B"), set `empirical_arbiter: deferred`, and carry the residual to the lift **conditionally on that observable** (do not guess the result). Set `state: adjudicated`.
 
 ### Step 6: Phase 4 — Preservation Contract (mutual steelman, accept/repair-once)
 

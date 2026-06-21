@@ -129,7 +129,7 @@ solver_b_thread_id: ""     # Codex thread for Solver B (bash-exec-solver in Bash
 mapper_thread_id: ""       # fresh anonymized thread (bash-exec-mapper)
 lift_thread_id: ""         # Lift Architect (bash-exec-lift)
 audit_thread_id: ""        # Meta Auditor — MUST differ from lift_thread_id (bash-exec-audit)
-empirical_arbiter: pending # pending|done|not_applicable (no empirical disagreements)
+empirical_arbiter: pending # pending|done|not_applicable|deferred (deferred = an empirical disagreement exists but the experiment can't be run this session)
 lift_attempts: 0
 max_lift_attempts: 2
 outcome: pending           # pending|lifted|aporia|no_material_divergence
