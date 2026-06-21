@@ -14,7 +14,7 @@ The single most important design fact: **the enemy of Aufhebung is not conflict 
 A Contradiction Lift run:
 
 1. **Fixes the question** (Decision Contract) so interpretation gaps are not mistaken for contradictions.
-2. **Seals two independent solutions** (Claude + Codex, neither sees the other first).
+2. **Seals two independent solutions** — a fresh Claude subagent (Solver A) and Codex (Solver B) solve **in parallel**; the orchestrator dispatches both and reads neither until both return, so sealing is **structural** (the orchestrator never authors a solution it could contaminate).
 3. **Maps the divergence** by type and names the **load-bearing** premises (flip-test).
 4. **Routes** each disagreement: empirically decidable → Codex runs a *discriminating* experiment; the rest → preservation.
 5. **Preserves** each side via mutual steelman (accept / repair-once handshake).
@@ -40,12 +40,26 @@ A Contradiction Lift run:
 ## Design principles (lessons baked in)
 
 1. **Averaging is the enemy, not conflict.** Never optimize for agreement, average, or residual-shrink. A diluted middle ground is failure, even when it looks like consensus.
-2. **Do not pre-assign positions.** Unlike Devil's Advocate (external opponent), let both models *independently* solve the same problem and raise the contradiction from the divergence. Strict ordering: **solve sealed, then reveal** — showing the other's answer first collapses the divergence into anchoring.
+2. **Do not pre-assign positions.** Unlike Devil's Advocate (external opponent), let both models *independently* solve the same problem and raise the contradiction from the divergence. Strict ordering: **solve sealed, then reveal** — showing the other's answer first collapses the divergence into anchoring. **Sealing is structural, not disciplinary:** the orchestrator must not author Solution A itself (while orchestrating it would already have seen Solver B). Solver A runs as a **fresh Claude subagent**, dispatched **in parallel** with Solver B (Codex); the orchestrator reads neither until both are sealed. The orchestrator's job is dispatch / anonymize / route / persist — never solve or synthesize.
 3. **Name the contradiction before lifting.** The real conflict is usually at the level of an unstated **load-bearing premise**, not the surface conclusion. Surfacing that premise is half of the lift.
 4. **Force the preservation moment.** Before lifting, each side must steelman the other in full (Aufhebung's "preserve"), then identify the **irreducible incompatible core** that survives mutual steelman. Averaging fails because it merges before isolating this residual.
 5. **Let the object adjudicate what it can.** Empirically decidable disagreements are *not debated* — Codex runs a **discriminating** experiment (pre-register "if X then A, if Y then B" before running). The object (code/data) asserts itself. Only execution-undecidable disagreements go to the lift.
-6. **A third role must be separate from the parties.** Letting a party synthesize produces sycophantic averaging. Mapping, lift construction, and audit run on **fresh threads with anonymized inputs**. Honest limitation: with only two models the "third party" is approximated, not real (see Role Distribution).
+6. **A third role must be separate from the parties.** Letting a party synthesize produces sycophantic averaging. Mapping, lift construction, and audit run on **fresh, anonymized roles** — either a **fresh Claude subagent** (own context window, no reasoning history) or a **fresh Codex thread**. Pick the assignee by *which independence the role needs* (see "Independence: two kinds"): subagents buy **context-independence**; only the Claude/Codex split **approximates prior-independence** (different model family — never a full guarantee).
 7. **Allow an honest aporia.** Forcing a synthesis when none exists disguises an average as a "synthesis". If the trade-off is genuinely irreducible, "this cannot be lifted; the axis is X" is worth more than a fake third term. This escape is the last guard against fleeing into averaging.
+
+## Independence: two kinds
+
+Every non-party role needs *some* independence, but there are **two distinct kinds**, and they come from different places:
+
+| Kind | What it prevents | Source |
+|------|------------------|--------|
+| **Context-independence** | sealing breaches, anchoring, orchestrator contamination, history leakage | a **fresh context** — a Claude **subagent** (own window, no reasoning history) *or* a fresh Codex thread |
+| **Prior-independence** | *correlated blind spots* — two solvers from the same training distribution making the same error and "agreeing" | a **different model family** — approximated (not guaranteed) by the **Claude × Codex** split; shared training data/eval practices mean overlap can remain |
+
+The consequences for role assignment:
+
+- **Solvers (Phase 1) need prior-independence** — the engine is *two different priors diverging* as a liftability detector. Keep **Solver A = Claude subagent, Solver B = Codex**. (Same-model two-pass is the degraded `claude-only` mode.) Subagents additionally make the seal structural (parallel dispatch, orchestrator reads neither first).
+- **Verification roles (Mapper, Lift Architect, Auditor) need context-independence first** — a fresh subagent or thread, anonymized, no history. They additionally benefit from **cross-model pairing**: audit a Claude-built lift with a **Codex** auditor and a Codex-built lift with a **Claude** auditor, so a correlated blind spot is **far less likely** to pass both build and audit. A **same-model agreement** (two instances of one model — e.g. the orchestrator and a Claude subagent — reaching the same answer) is **not** independent evidence: shared priors correlate their errors, so never treat "the subagent agreed" as confirmation.
 
 ## Workflow Phases
 
@@ -55,9 +69,13 @@ State machine: `contract → sealed → mapped → adjudicated → preserved →
 
 Fix the shared frame **first**: the question `Q`, success conditions, constraints, immovable requirements, empirically observable variables, and the required decision format. If this is vague, a mere interpretation gap will be mis-read as a philosophical contradiction. Confirm with the user.
 
-### Phase 1: Sealed Solutions (Claude + Codex, independent)
+### Phase 1: Sealed Solutions (Claude + Codex, independent, parallel)
 
-Both models solve `Q` against the **same Decision Contract**, without seeing each other's work. Each submits the **decision function, not just a conclusion**, using `references/sealed-solution-template.md`: conclusion, decision rule, causal model, load-bearing assumptions, invariants to protect, rejected alternatives, the observation that would flip the conclusion, confidence. Solver A = Claude; Solver B = Codex (fresh thread). **Do not reveal one to the other.**
+Both models solve `Q` against the **same Decision Contract**, without seeing each other's work. Each submits the **decision function, not just a conclusion**, using `references/sealed-solution-template.md`: conclusion, decision rule, causal model, load-bearing assumptions, invariants to protect, rejected alternatives, the observation that would flip the conclusion, confidence.
+
+- **Solver A = a fresh Claude subagent** (Task tool), **not** the orchestrator — so the orchestrator never authors a solution it has already contaminated by seeing Solver B.
+- **Solver B = Codex** (fresh thread, `read-only`).
+- **Dispatch both in parallel** and collect both sealed results; the orchestrator reads neither until both return. **Do not reveal one to the other**, and never pass Solution A into Solver B's prompt (or vice versa).
 
 ### Phase 2: Divergence Mapping (anonymized)
 
@@ -77,13 +95,15 @@ Route each disagreement by type:
 
 Each party submits, about the **other**: the conditions under which the other's solution is strongest; the truth-moment lost if it is discarded; a concrete failure of the design without that moment; and the incompatible core that still remains. The other party reviews with **`accept` / `repair once`** only — no unbounded handshake (review target is "is my reasoning represented faithfully?", not "do I agree?").
 
+**Party continuity across phases.** Codex's side continues on `solver_b_thread_id` via `codex-reply` (its thread retains Solution B). Solver A was a **one-shot subagent**, so the Claude-side party actions here (its steelman of B, and its review of B's steelman of A) run as a **fresh Claude subagent re-seeded from the persisted Solution A + Solution B on disk** — identity is reconstructed from the record, not a continued thread. This is sufficient because steelman/review depend only on the *recorded* decision function and assumptions, not on the subagent's private reasoning.
+
 ### Phase 5: Lift Construction (anonymized)
 
 A fresh "Lift Architect" thread builds a **selection mechanism**, not a position: `f(C) → A | B | N` mapping conditions to choices. Required output (`references/lift-audit-template.md`): the conditions→choice mapping; what is conserved from both A and B; any **new** variable / causal relation introduced; a concrete example that selects A, one that selects B, and **one where the choice differs from a simple average**; and failure/falsification conditions. An expanded question `Q'` is **not** mandatory — the lift may instead be a threshold, an ordering, an option value, or a reversibility-staged decision (broadening the question can itself be an abstraction-escape).
 
 ### Phase 6: Lift Audit
 
-An **independent** thread (not the one that built the lift) runs all 7 tests. All must pass for `accepted`; on failure, reconstruct **once**, and if it still fails, declare `aporia`.
+An **independent** role (not the one that built the lift) runs all 7 tests. Prefer **cross-model pairing**: if the Lift Architect was a Claude subagent, run the audit on **Codex** (and vice versa), so a correlated blind spot is far less likely to survive both build and audit. All must pass for `accepted`; on failure, reconstruct **once**, and if it still fails, declare `aporia`.
 
 **The 7 tests** (these close the holes: a useless new variable, fabricated scenarios, a mere condition-branch router masquerading as a lift):
 
@@ -99,19 +119,22 @@ Especially require the **causal mechanism**: *why* does that condition change th
 
 ## Role Distribution
 
+The **orchestrator** (the Claude session running this skill) is dispatch-only: it fixes the contract, dispatches roles, anonymizes inputs, routes, persists state, and reports. It **never** authors a solution, a steelman, a lift, or an audit — those all run in fresh roles.
+
 | Role | Assignee | Notes |
 |------|----------|-------|
-| Solver A | Claude (native) | sealed |
+| Solver A | **fresh Claude subagent** (Task tool, `read-only`) | sealed; dispatched in parallel with Solver B; **not** the orchestrator |
 | Solver B | Codex (fresh thread, `read-only`) | sealed; never sees A first |
-| Mapper | fresh Codex thread (anonymized X/Y) | typed divergence + flip-test |
+| Mapper | fresh Claude subagent **or** Codex thread (anonymized X/Y) | typed divergence + flip-test |
 | Empirical Arbiter | Codex execution (`read-only`; `workspace-write` only if an experiment must build/run) | pre-registered discriminating experiments |
-| Lift Architect | fresh thread (anonymized) | builds the selection mechanism |
-| Meta Auditor | independent thread (did **not** build the lift) | 7-test audit; cross-checked |
+| Lift Architect | fresh subagent **or** Codex thread (anonymized) | builds the selection mechanism |
+| Meta Auditor | independent role that did **not** build the lift — **prefer the opposite model** to the Architect | 7-test audit; cross-model where possible |
 
-**Honest limitation on independence.** There are only two models. The "third-party" roles (Mapper, Lift Architect, Meta Auditor) cannot be a literal third model; they are **approximated** by fresh Codex threads with **anonymized inputs and no reasoning history**. State this plainly — do not overclaim independence.
+**Honest limitation on independence.** A Claude subagent gives **context-independence** (fresh window, no history) but **not prior-independence** — it shares Claude's training distribution, so Claude-subagent roles can carry the same blind spots as the orchestrator. Stronger (still imperfect) prior-independence comes from the **Claude × Codex** split — different model families, though shared training data/eval practices mean overlap can remain. Therefore: keep solvers cross-model, and **pair verification across models** (Claude-built lift → Codex audit, and vice versa) to reduce — not eliminate — correlated errors. Where a role cannot be cross-model (e.g. `claude-only` mode, or no Task tool), say so plainly and **do not treat a same-model agreement as confirmation**.
 
-- **Default mode**: `codex` (independence of two different models is the design goal).
-- **`claude-only` mode**: degraded — Claude can run two passes, but the core (two *different* models diverging) is lost. Warn explicitly and recommend `codex` mode.
+- **Default mode**: `codex` (independence of two different models is the design goal). Solver A = Claude subagent, Solver B = Codex; verification roles can be cross-model.
+- **`claude-only` mode**: degraded — Solver B becomes a **second fresh Claude subagent** (`solver_b_thread_id: claude-subagent-solverB`), and **no role can be cross-model**, so only context-independence is available (the engine — two *different* models diverging — is lost). The subagents still keep sealing structural and avoid anchoring, but treat agreement with extra suspicion. Warn explicitly and recommend `codex` mode.
+- **No Task tool** (subagents unavailable): Solver A falls back to the orchestrator (`solver_a_role: orchestrator-fallback`), authored **first** while still blind to Solver B and **persisted** to the state file, **then** Solver B is dispatched (safe because A is already sealed). Authoring A *after* seeing B is forbidden. Sealing degrades from structural to **disciplinary**; verification roles fall back to Codex threads. Note this degradation in the report.
 
 ## State File
 
@@ -119,16 +142,20 @@ Persisted to `tmp/contradiction-lift/<task-id>.md` (survives compaction):
 
 ```yaml
 ---
-schema: contradiction-lift/v1
+schema: contradiction-lift/v2   # v2 adds *_role fields + claude-subagent actor keys. Reading a v1 file: non-empty *_thread_id ⇒ *_role=codex-thread; empty *_thread_id ⇒ that phase had not run (leave empty, assign on resume); solver_a_role ⇒ orchestrator-fallback (v1's Solver A was the orchestrator).
 task_id: 20260621-090000-12345
 created: 2026-06-21T09:00:00Z
 question: "Should the loop stop on fixed rounds or convergence detection?"
 mode: codex
 state: contract            # contract|sealed|mapped|adjudicated|preserved|lifted|accepted|aporia|no_material_divergence
-solver_b_thread_id: ""     # Codex thread for Solver B (bash-exec-solver in Bash mode)
-mapper_thread_id: ""       # fresh anonymized thread (bash-exec-mapper)
-lift_thread_id: ""         # Lift Architect (bash-exec-lift)
-audit_thread_id: ""        # Meta Auditor — MUST differ from lift_thread_id (bash-exec-audit)
+solver_a_role: claude-subagent  # claude-subagent (default) | orchestrator-fallback (only when the Task tool is unavailable — sealing degrades to disciplinary)
+solver_b_thread_id: ""     # Codex thread for Solver B (bash-exec-solver in Bash mode; claude-subagent-solverB in claude-only mode)
+mapper_role: ""            # claude-subagent | codex-thread (anonymized)
+mapper_thread_id: ""       # actor key: Codex threadId | bash-exec-mapper | claude-subagent-mapper (subagents get a per-role sentinel so the distinctness invariant still holds)
+lift_role: ""              # claude-subagent | codex-thread (anonymized)
+lift_thread_id: ""         # actor key: Codex threadId | bash-exec-lift | claude-subagent-lift
+audit_role: ""             # claude-subagent | codex-thread — prefer the OPPOSITE model to lift_role
+audit_thread_id: ""        # actor key: Codex threadId | bash-exec-audit | claude-subagent-audit — MUST differ from lift_thread_id (per-role sentinels record this distinctness even for two subagents; freshness comes from always dispatching a new subagent)
 empirical_arbiter: pending # pending|done|not_applicable|deferred (deferred = an empirical disagreement exists but the experiment can't be run this session)
 lift_attempts: 0
 max_lift_attempts: 2
@@ -150,10 +177,12 @@ outcome: pending           # pending|lifted|aporia|no_material_divergence
 
 ## Safety Guards
 
-- Solver B / Mapper / Empirical Arbiter run **read-only** by default (`sandbox: "read-only"`); only an experiment that must build/run uses `workspace-write`, and only with confirmation.
-- **Sealing is load-bearing**: never pass Solution A into Solver B's prompt (or vice versa) before both are sealed.
+- Solver A subagent / Solver B / Mapper / Empirical Arbiter run **read-only** by default (`sandbox: "read-only"`); only an experiment that must build/run uses `workspace-write`, and only with confirmation.
+- **Sealing is structural**: Solver A is a fresh Claude subagent (not the orchestrator), dispatched in parallel with Solver B; the orchestrator reads neither until both return. Never pass Solution A into Solver B's prompt (or vice versa) before both are sealed.
+- **The orchestrator never authors** a solution / steelman / lift / audit — each runs in a fresh role. (This is what removes the contamination the old "orchestrator = Solver A" design could not avoid.) **One documented exception:** when the Task tool is unavailable, **Solver A and its Phase 4 party actions** (the Claude-side steelman/review) fall back to the orchestrator (`solver_a_role: orchestrator-fallback`); sealing degrades to disciplinary and the Claude party action loses its fresh-context separation — flag both degradations in the report.
+- **Subagents are analysis-only**: a Claude-subagent role must not write files — use a read-only subagent type where available and instruct the subagent to produce only the requested artifact (no edits, no commits). The state file is written by the orchestrator, not the role.
 - **Anonymize** A/B → X/Y for Mapper / Lift Architect / Meta Auditor, and do not pass prior reasoning history.
-- **Role threads must be mutually distinct** where independence matters: `mapper_thread_id ≠ solver_b_thread_id`, the Lift Architect thread ≠ mapper/solver, and the auditor ≠ architect (`audit_thread_id ≠ lift_thread_id`). Each independence-bearing role gets its **own** fresh thread (in Bash mode, the distinct `bash-exec-<role>` sentinels preserve this invariant).
+- **Roles must be mutually distinct** where independence matters: Mapper ≠ Solver B, Lift Architect ≠ mapper/solver, and auditor ≠ architect (`audit_thread_id ≠ lift_thread_id`). Each independence-bearing role gets its **own** fresh subagent/thread. The `*_thread_id` field holds a per-role **actor key**: a Codex `threadId`, a `bash-exec-<role>` sentinel (Bash mode), or a `claude-subagent-<role>` sentinel (subagent mode). The unequal comparison (`claude-subagent-lift ≠ claude-subagent-audit`) is a **procedural record that distinct roles were dispatched**, not a runtime proof of a distinct Task invocation — actual freshness is guaranteed by the orchestrator **always dispatching a new subagent for each role** (never reusing one). For the audit, prefer the **opposite model** to the Lift Architect.
 - Confirm before any file modification (this skill is analytical; writes are limited to the state file and the final report).
 - Set per-delegation timeout: `min(wait_timeout + 60, 600) * 1000` ms for `codex exec`.
 
@@ -223,7 +252,8 @@ Log: tmp/contradiction-lift/<task-id>.md
 | `lifted` | Phase 6 (Audit) |
 | `accepted` / `aporia` / `no_material_divergence` | Report |
 
-3. **Thread recovery**: a fresh-thread role whose id is lost is simply restarted from its persisted inputs (the ledger / sealed solutions / lift are on disk). Keep `audit_thread_id ≠ lift_thread_id` on restart.
+3. **Role recovery**: every independence-bearing role is **stateless and re-startable from disk** — Codex threads from their persisted inputs (ledger / sealed solutions / lift), and Claude-subagent roles by re-dispatching a fresh subagent re-seeded from the same persisted inputs (one-shot subagents have no thread to resume; this is by design — see Phase 4 "Party continuity"). Keep `audit_thread_id ≠ lift_thread_id` (the per-role actor-key sentinels **record** this distinctness — a procedural record, not a runtime proof; freshness comes from always dispatching a new subagent) on restart.
+4. **Schema migration**: a `contradiction-lift/v1` state file has no `*_role` fields. v1 third-party roles were always Codex, so read a **non-empty** `*_thread_id` as `*_role = codex-thread`; an **empty** `*_thread_id` means *that phase had not run yet* (leave it empty and assign the role by the new rules when you reach that phase — do **not** infer `claude-subagent`). `solver_a_role = orchestrator-fallback` (v1's Solver A was the orchestrator). Re-stamp as `v2` on the next write.
 
 ## References
 
