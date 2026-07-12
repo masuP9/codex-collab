@@ -148,7 +148,7 @@ Complete
 
 **Best for**:
 - Tasks requiring deep codebase understanding for planning
-- When Codex model is optimized for fast execution (codex-mini, o4-mini)
+- When the configured Codex model is optimized for fast execution over deep reasoning
 - Complex refactoring where planning quality matters most
 - When Claude's reasoning strength should drive the architecture
 
@@ -214,7 +214,7 @@ Complete
 | Large task | Divide and Conquer |
 | Critical code | Review Type (strict) |
 | Complex planning needed | Claude-Led Type |
-| Reasoning model (o3 系) | Review Type |
+| Reasoning-optimized model configured | Review Type |
 
 ## Switching Patterns Mid-Task
 

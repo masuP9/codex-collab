@@ -76,8 +76,8 @@ MCP が利用できない場合のフォールバック。プロンプトを std
 # 基本パターン
 codex exec -s read-only - < prompt.txt
 
-# モデル指定
-codex exec -s read-only -m o4-mini - < prompt.txt
+# モデル指定（通常は省略して Codex デフォルトを使用）
+codex exec -s read-only -m gpt-5.6-sol - < prompt.txt
 ```
 
 - 各呼び出しはステートレス（会話コンテキストは保持されない）

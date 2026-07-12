@@ -145,28 +145,30 @@ Check for `.claude/codex-collab.local.md` in project root:
 
 ```markdown
 ---
-model: o4-mini
 sandbox: read-only
+language: ja
 ---
 
 # Project-specific instructions
 ```
 
 Parse YAML frontmatter for:
-- `model`: Codex model to use
+- `model`: Codex model to use (omit to use the Codex default from `~/.codex/config.toml`)
 - `sandbox`: read-only | workspace-write | danger-full-access
 - `workflow`: Workflow mode (auto | codex-leads | claude-leads, default: auto; auto は常に codex-leads を選択)
 - `exchange.enabled`: Enable planning exchange (default: true, codex-leads only)
 - `exchange.max_iterations`: Maximum rounds for multi-turn exchange (default: 3)
 - `exchange.user_confirm`: When to ask user confirmation (never | always | on_important)
-- `exchange.history_mode`: How to handle history (full | summarize)
+- `exchange.history_mode`: How to handle history (full | summarize; Bash fallback only — MCP threads preserve history)
 - `review.enabled`: Enable review iteration (default: true, codex-leads only)
 - `review.max_iterations`: Maximum rounds for review iteration (default: 5)
+- `review.max_verdict_retries`: Retries when verdict is missing/unclear (default: 3)
 - `review.user_confirm`: When to ask user confirmation for reviews (default: never)
 - `claude_leads.sandbox`: Sandbox for Codex implementation (default: workspace-write)
 - `claude_leads.consult_codex`: Enable plan consultation phase (default: true)
 - `claude_leads.safety_checkpoint`: Pre-implementation checkpoint (stash | wip-commit | none, default: stash)
 - `claude_leads.review.max_iterations`: Max review-fix iterations (default: 3)
+- `codex.wait_timeout`: Max execution time for `codex exec` in seconds (default: 180, max: 600; Bash fallback only)
 
 ### Settings Priority
 
@@ -241,15 +243,15 @@ MCP が利用できない場合、`codex exec`（ステートレス実行）を�
 source scripts/codex-helpers.sh
 PROMPT_FILE=$(codex_write_prompt "$PROMPT_CONTENT" "plan")
 OUTPUT_FILE="$(codex_tmp_path 'codex-output.md')"
-codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only" "o4-mini"
+codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only"
 
-# 直接実行
-codex exec -s read-only -m o4-mini - < prompt.txt 2>&1 | tee output.md
+# 直接実行（モデルは通常 Codex デフォルトを使用。指定する場合のみ -m を付ける）
+codex exec -s read-only - < prompt.txt 2>&1 | tee output.md
 ```
 
 ### Codex CLI Options
 
-- `-m, --model <model>` - Specify model (e.g., o4-mini, o3)
+- `-m, --model <model>` - Specify model (e.g., gpt-5.6-sol; omit to use the Codex default)
 - `-s, --sandbox <mode>` - read-only | workspace-write | danger-full-access
 - `-C, --cd <dir>` - Working directory
 - `--full-auto` - Automatic execution mode

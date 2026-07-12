@@ -343,8 +343,8 @@ Claude と Codex に**同じ問いを独立に解かせ**、答えの食い違�
 
 ```markdown
 ---
-model: o4-mini
 sandbox: read-only
+language: ja
 ---
 
 # プロジェクト固有の指示
@@ -352,20 +352,23 @@ sandbox: read-only
 このプロジェクトでは TypeScript を使用しています。
 ```
 
+サンプルは [`.claude/codex-collab.local.md.example`](.claude/codex-collab.local.md.example) を参照してください。
+
 ### 設定オプション
 
 | オプション | デフォルト | 説明 |
 |-----------|-----------|------|
 | `workflow` | `auto` | ワークフロー選択 (auto, codex-leads, claude-leads) |
-| `model` | (Codexデフォルト) | 使用するモデル (o3, o4-mini等) |
+| `model` | (Codexデフォルト) | 使用するモデル (gpt-5.6-sol 等)。省略時は `~/.codex/config.toml` の設定を使用 |
 | `sandbox` | `read-only` | サンドボックスモード (read-only, workspace-write, danger-full-access)。codex-leads用 |
 | `language` | `en` | レスポンス言語 (en, ja 等) |
 | `exchange.enabled` | `true` | Planning exchangeのグローバルキルスイッチ (codex-leads) |
 | `exchange.max_iterations` | `3` | Planning exchangeの最大ラウンド数 |
 | `exchange.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
-| `exchange.history_mode` | `summarize` | 履歴管理方式: full=全履歴保持, summarize=最新2ラウンドのみ全文 |
+| `exchange.history_mode` | `summarize` | 履歴管理方式: full=全履歴保持, summarize=最新2ラウンドのみ全文。**Bash fallback 専用**（MCPモードではスレッドが履歴を保持） |
 | `review.enabled` | `true` | Review iterationの有効化 (codex-leads) |
 | `review.max_iterations` | `5` | Review iterationの最大ラウンド数（ゴールが明確なので多め） |
+| `review.max_verdict_retries` | `3` | verdict が取れない/不明瞭な場合のリトライ回数 |
 | `review.user_confirm` | `never` | レビュー時は自動でイテレーション |
 | `claude_leads.sandbox` | `workspace-write` | Codex実装用サンドボックス (claude-leads) |
 | `claude_leads.consult_codex` | `true` | 計画の壁打ちフェーズ有効化 (claude-leads) |
@@ -373,6 +376,7 @@ sandbox: read-only
 | `claude_leads.review.max_iterations` | `3` | Claudeレビュー修正ループの上限 (claude-leads) |
 | `collab_planning.max_iterations` | `3` | 計画レビュー改善サイクルの上限 |
 | `collab_planning.user_confirm` | `on_important` | ユーザー確認タイミング (never, always, on_important) |
+| `codex.wait_timeout` | `180` | `codex exec` の最大実行時間（秒、max 600）。**Bash fallback 専用**（MCPモードでは無視） |
 
 ### 設定の優先順位
 
@@ -384,7 +388,7 @@ sandbox: read-only
 
 ### Codex-Leads（従来）
 
-Codex が計画・レビュー、Claude が実装するワークフロー。推論に優れたモデル（o3, gpt-5等）に最適。
+Codex が計画・レビュー、Claude が実装するワークフロー。推論に優れたモデルに最適。
 
 ```
 1. ユーザー: /codex-collab "機能Xを実装して"
@@ -397,7 +401,7 @@ Codex が計画・レビュー、Claude が実装するワークフロー。推�
 
 ### Claude-Leads（新規）
 
-Claude が計画・レビュー、Codex が実装するワークフロー。高速実行向きモデル（codex-mini, o4-mini等）に最適。
+Claude が計画・レビュー、Codex が実装するワークフロー。高速実行向きの軽量モデルに最適。
 
 ```
 1. ユーザー: /codex-collab "機能Xを実装して"
