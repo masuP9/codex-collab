@@ -50,32 +50,31 @@ Override settings from `~/.codex/config.toml`:
 
 ```bash
 # Set model
-codex exec -c model="o3" "prompt"
+codex exec -c model="gpt-5.6-sol" "prompt"
 
 # Set sandbox permissions
 codex exec -c 'sandbox_permissions=["disk-full-read-access"]' "prompt"
 
 # Multiple overrides
-codex exec -c model="o4-mini" -c 'features.stream=true' "prompt"
+codex exec -c model="gpt-5.6-sol" -c 'features.stream=true' "prompt"
 ```
 
 ## Model Selection
 
 ### Available Models
 
-Common models (subject to OpenAI availability):
-- `o3` - Most capable, higher cost
-- `o4-mini` - Balanced performance/cost
-- Default varies by Codex installation
+Model availability changes with OpenAI releases — do not hardcode model names in prompts or settings unless there is a specific reason.
+
+- **Default (recommended)**: omit `model` / `-m` entirely; Codex uses the `model` value from `~/.codex/config.toml`
+- Example current models: `gpt-5.6-sol`, `gpt-5.5` (check `~/.codex/config.toml` or the Codex release notes for what is currently available)
+- Retired model names (e.g., `o3`, `o4-mini`, `gpt-5.x-codex`) will fail or be silently migrated
 
 ### Selection Criteria
 
-| Task Type | Recommended Model |
-|-----------|-------------------|
-| Complex planning | o3 |
-| Quick review | o4-mini |
-| Architectural decisions | o3 |
-| Simple validation | o4-mini |
+| Task Type | Recommendation |
+|-----------|----------------|
+| Planning / review / architectural decisions | Codex default (usually the most capable current model) |
+| Quick validation on a budget | A lighter current model, if one is available |
 
 ## Configuration Hierarchy
 
@@ -118,7 +117,7 @@ Provide a code review with verdict (PASS/CONDITIONAL/FAIL)."
 
 ```bash
 codex exec \
-  -m o4-mini \
+  -m gpt-5.6-sol \
   -s read-only \
   "Quick validation: Is this function safe? [code here]"
 ```
@@ -216,7 +215,7 @@ codex review [OPTIONS] [PROMPT]
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--uncommitted` | | Review uncommitted/staged changes |
-| `--config <key=value>` | `-c` | Override config values (e.g., `model="o4-mini"`) |
+| `--config <key=value>` | `-c` | Override config values (e.g., `model="gpt-5.6-sol"`) |
 
 ### Usage
 
@@ -228,7 +227,7 @@ codex review --uncommitted
 codex review --uncommitted "Focus on security vulnerabilities"
 
 # With model override
-codex review --uncommitted -c 'model="o4-mini"'
+codex review --uncommitted -c 'model="gpt-5.6-sol"'
 ```
 
 ### Key Differences from `codex exec`
@@ -267,11 +266,11 @@ source scripts/codex-helpers.sh
 # For general execution
 PROMPT_FILE=$(codex_write_prompt "$PROMPT_CONTENT" "plan")
 OUTPUT_FILE="$(codex_tmp_path 'codex-output.md')"
-codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only" "o4-mini"
+codex_run_exec "$PROMPT_FILE" "$OUTPUT_FILE" "read-only"   # model arg omitted → Codex default
 
 # For code review (preferred for review phase)
 REVIEW_OUTPUT="$(codex_tmp_path 'codex-review-output.md')"
-codex_run_review "$REVIEW_OUTPUT" "o4-mini"
+codex_run_review "$REVIEW_OUTPUT"
 ```
 
 ### Helper Functions

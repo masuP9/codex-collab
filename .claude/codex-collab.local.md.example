@@ -1,33 +1,57 @@
 # Codex Collab Settings Example
 
 Copy this file to `.claude/codex-collab.local.md` and customize for your project.
+Global settings can also be placed at `~/.claude/codex-collab.local.md`
+(priority: command args > project settings > global settings > safe defaults).
 
 ---
-model: o4-mini
-sandbox: read-only
-language: en               # Response language for Codex: en | ja | etc.
-                           # When set to non-English, adds language directive to all prompts.
-                           # For ja: "日本語で回答してください。途中の説明や思考プロセスも日本語で..."
-                           # This ensures both final output and thinking process are in the target language.
+# ワークフロー選択
+workflow: auto             # auto | codex-leads | claude-leads
+                           # auto は常に codex-leads を選択（claude-leads は明示指定時のみ有効）
 
-# Timeout settings
-codex:
-  wait_timeout: 180        # seconds (default: 180, max: 600)
-                           # codex exec の最大実行時間（Bash tool の max は 600s）
+# Codex モデル（省略推奨: 省略時は Codex 側デフォルト = ~/.codex/config.toml の model を使用）
+# 提供モデルは変わりやすいため、特別な理由がなければ固定しないこと。
+# model: gpt-5.6-sol       # 例: gpt-5.6-sol | gpt-5.5
 
-# Planning exchange settings (Codex plans → Claude questions → Codex refines)
+sandbox: read-only         # read-only | workspace-write | danger-full-access
+                           # codex-leads 用（Codex は計画・レビュー担当なので read-only 推奨）。
+                           # claude-leads の実装フェーズには claude_leads.sandbox が使われる。
+
+language: en               # Codex の応答言語: en | ja | etc.
+                           # 非英語を設定すると全プロンプトに言語指示が付加される。
+                           # ja の場合: 「日本語で回答してください。途中の説明や思考プロセスも日本語で...」
+
+# Planning exchange settings (codex-leads: Codex plans → Claude questions → Codex refines)
 exchange:
-  enabled: true              # Global kill-switch for planning exchanges
-  max_iterations: 3
+  enabled: true              # Planning exchange のグローバルキルスイッチ
+  max_iterations: 3          # 暴走防止の上限ラウンド数
   user_confirm: on_important # never | always | on_important
   history_mode: summarize    # full | summarize
+                             # ※ Bash fallback 専用。MCP モードではスレッドが履歴を保持するため無視される。
 
-# Review iteration settings (Codex reviews → Claude fixes → Codex re-reviews)
+# Review iteration settings (codex-leads: Codex reviews → Claude fixes → Codex re-reviews)
 review:
-  enabled: true              # Enable/disable review iterations
-  max_iterations: 5          # Can be higher than exchange (goal is clear, diff is small)
-  max_verdict_retries: 3     # Retries when verdict is missing/unclear from Codex
-  user_confirm: never        # Auto-iterate for reviews
+  enabled: true              # Review iteration の有効化
+  max_iterations: 5          # exchange より多め（ゴールが明確で diff が小さいため）
+  max_verdict_retries: 3     # verdict が取れない/不明瞭な場合のリトライ回数
+  user_confirm: never        # レビューは自動イテレーション
+
+# claude-leads workflow settings（Claude が計画・レビュー、Codex が実装）
+claude_leads:
+  sandbox: workspace-write   # Codex 実装フェーズ用 sandbox
+  consult_codex: true        # 実装前の計画壁打ちフェーズを有効化
+  safety_checkpoint: stash   # stash | wip-commit | none（実装前のチェックポイント方式）
+  review:
+    max_iterations: 3        # Claude レビュー修正ループの上限
+
+# /collab-planning settings（計画のみ作成するワークフロー）
+collab_planning:
+  max_iterations: 3          # 計画レビュー改善サイクルの上限
+  user_confirm: on_important # never | always | on_important
+
+# Bash fallback 専用設定（MCP モードでは無視される）
+codex:
+  wait_timeout: 180          # codex exec の最大実行時間（秒。default: 180, max: 600 = Bash tool の上限）
 ---
 
 ## Project-specific Instructions

@@ -330,7 +330,7 @@ echo "Codex plan saved to: $CODEX_OUTPUT"
 > For long-running tasks, use `run_in_background: true` on the Bash tool.
 
 **Options to include based on settings:**
-- `-m, --model <model>` - Specify model (e.g., o4-mini, o3) from `model` setting
+- `-m, --model <model>` - Specify model from `model` setting (omit when unset — Codex uses its own default)
 - `-s, --sandbox <mode>` - read-only | workspace-write | danger-full-access from `sandbox` setting
 
 ### Step 5: Read and Process Response
