@@ -8,7 +8,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Run helper tests
         run: bash scripts/test-helpers.sh
@@ -22,12 +22,12 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Shellcheck
         run: shellcheck --source-path=SCRIPTDIR -x scripts/*.sh hooks/*.sh skills/claude-collab/scripts/*.sh
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.x'
 
