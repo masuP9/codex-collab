@@ -130,7 +130,7 @@ codex-collab/
 - `codex_strip_ansi()` - ANSI エスケープコード除去
 
 **レビュー解析（Bash fallback 用）:**
-- `codex_run_review()` - codex review --uncommitted のラッパー（ANSI 除去、出力保存、モデル retry、exit code ハンドリング）
+- `codex_run_review()` - codex review --uncommitted のラッパー（sandbox_mode 指定、ANSI 除去、出力保存、モデル retry、exit code ハンドリング）
 - `codex_infer_verdict()` - レビューレスポンスから verdict を推定（メタデータ → [P1]-[P4] → findings なし pass）
 - `codex_extract_review_findings()` - レビューレスポンスから findings を抽出
 

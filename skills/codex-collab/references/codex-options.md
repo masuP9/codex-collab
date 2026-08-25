@@ -279,7 +279,7 @@ codex_run_review "$REVIEW_OUTPUT"
 |----------|---------|
 | `codex_write_prompt(content, prefix)` | Write prompt to temp file, return path |
 | `codex_run_exec(prompt, output, sandbox, model)` | Run codex exec with full I/O handling |
-| `codex_run_review(output, model)` | Run codex review --uncommitted with fallback support |
+| `codex_run_review(output, model, sandbox)` | Run codex review --uncommitted with fallback support (sandbox defaults to read-only) |
 | `codex_infer_verdict(response)` | Infer verdict from review response (metadata → [P1]-[P4] → pass) |
 | `codex_extract_review_findings(response)` | Extract findings from review response |
 | `codex_build_exec_command(prompt, sandbox, model)` | Build command string (for eval) |

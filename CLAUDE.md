@@ -97,7 +97,7 @@ codex review --uncommitted "セキュリティ脆弱性に注目してレビュ�
 ```
 
 - レビューフェーズでは `codex review` を第一選択、失敗時は `codex exec` にフォールバック
-- `codex_run_review()` が ANSI 除去、出力保存、exit code ハンドリング、モデル指定 retry を統合処理
+- `codex_run_review()` が sandbox_mode 指定（既定 read-only、`-c sandbox_mode=` 経由）、ANSI 除去、出力保存、exit code ハンドリング、モデル指定 retry を統合処理
 - `codex_infer_verdict()` でレスポンスから verdict を推定（メタデータ → `[P1]-[P4]` → findings なし pass）
 
 ## プロジェクト構造
@@ -188,7 +188,7 @@ fi
 コア関数（Bash fallback 用の Codex 実行）:
 
 - `codex_run_exec()` - codex exec のラッパー（stdin パイプ、ANSI 除去、出力保存、exit code ハンドリング）
-- `codex_run_review()` - codex review --uncommitted のラッパー（ANSI 除去、出力保存、モデル retry、exit code ハンドリング）
+- `codex_run_review()` - codex review --uncommitted のラッパー（sandbox_mode 指定、ANSI 除去、出力保存、モデル retry、exit code ハンドリング）
 - `codex_build_exec_command()` - codex exec コマンド文字列の構築
 - `codex_write_prompt()` - プロンプトを一時ファイルに書き出し
 - `codex_strip_ansi()` - ANSI エスケープコード除去
