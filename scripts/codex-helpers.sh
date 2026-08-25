@@ -338,19 +338,25 @@ codex_get_verdict() {
 # ==============================================================================
 
 # Run codex review --uncommitted with full I/O handling
-# Usage: codex_run_review "output_file" "model"
+# Usage: codex_run_review "output_file" "model" "sandbox"
 # Arguments:
 #   output_file - Path to save output (optional, defaults to tmp/codex-review-output-$$.md)
 #   model       - Model name (optional)
+#   sandbox     - Sandbox mode (optional, default: read-only)
 # Returns: Exit code (0=success, non-zero=fallback needed)
 # Side effects: Writes output to output_file, strips ANSI codes
 #
 # Note: codex review --uncommitted does not accept a custom prompt as a
 # positional argument. Custom review instructions should be provided via
 # the fallback codex exec path instead.
+#
+# Note: codex review has no -s/--sandbox flag, so the sandbox mode is passed
+# via -c sandbox_mode=. Without it, review inherits sandbox_mode from
+# ~/.codex/config.toml, which may allow writes during a read-only task.
 codex_run_review() {
   local output_file="${1:-$(codex_tmp_path "codex-review-output-$$.md")}"
   local model="${2:-}"
+  local sandbox="${3:-read-only}"
 
   # Check if codex command exists
   if ! command -v codex &>/dev/null; then
@@ -364,9 +370,10 @@ codex_run_review() {
     return 127
   fi
 
-  codex_debug "run_review: output=$output_file model=$model"
+  codex_debug "run_review: output=$output_file model=$model sandbox=$sandbox"
 
-  local -a review_args=(review --uncommitted)
+  local -a base_args=(review --uncommitted -c "sandbox_mode=\"${sandbox}\"")
+  local -a review_args=("${base_args[@]}")
 
   # Try with model config if specified
   if [ -n "$model" ]; then
@@ -380,7 +387,7 @@ codex_run_review() {
   # If model config caused failure, retry without it
   if [ "$exit_code" -ne 0 ] && [ -n "$model" ]; then
     codex_debug "run_review: retrying without model config (exit_code=$exit_code)"
-    review_args=(review --uncommitted)
+    review_args=("${base_args[@]}")
     exit_code=0
     # shellcheck disable=SC2119 # codex_strip_ansi is used in pipe (stdin) mode here, not with $1
     (set -o pipefail; codex "${review_args[@]}" 2>&1 | codex_strip_ansi | tee "$output_file") || exit_code=$?

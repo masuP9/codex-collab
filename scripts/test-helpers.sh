@@ -881,7 +881,68 @@ MOCK
     fail "run_review failure" "Expected non-zero exit, got $exit4"
   fi
 
+  # Tests 5-7: sandbox_mode is passed via -c (codex review has no -s flag)
+  # Mock records every invocation's args so we can assert on them.
+  local args_log
+  args_log="$(pwd)/$test_tmp/args.log"
+  cat > "$mock_dir/codex" << 'MOCK'
+#!/bin/bash
+if [ "$1" = "review" ] && [ "$2" = "--help" ]; then
+  exit 0
+fi
+echo "$*" >> "$MOCK_ARGS_LOG"
+# Fail when a model config is present, to exercise the retry path
+for arg in "$@"; do
+  case "$arg" in
+    model=*) echo "Error: unknown model"; exit 2 ;;
+  esac
+done
+echo "Review complete. No issues found."
+echo "---"
+echo "verdict: pass"
+echo "---"
+exit 0
+MOCK
+  chmod +x "$mock_dir/codex"
+  PATH="$mock_dir:/usr/bin:/bin"
+  export MOCK_ARGS_LOG="$args_log"
+
+  # Test 5: default sandbox is read-only
+  : > "$args_log"
+  local out5="$test_tmp/out5.md"
+  codex_run_review "$out5" "" >/dev/null 2>&1 || true
+  if grep -q 'sandbox_mode="read-only"' "$args_log"; then
+    pass "run_review: defaults to sandbox_mode=read-only"
+  else
+    fail "run_review default sandbox" "Expected sandbox_mode=\"read-only\" in args, got: $(cat "$args_log")"
+  fi
+
+  # Test 6: explicit sandbox mode is honored
+  : > "$args_log"
+  local out6="$test_tmp/out6.md"
+  codex_run_review "$out6" "" "workspace-write" >/dev/null 2>&1 || true
+  if grep -q 'sandbox_mode="workspace-write"' "$args_log"; then
+    pass "run_review: explicit sandbox mode is passed through"
+  else
+    fail "run_review explicit sandbox" "Expected sandbox_mode=\"workspace-write\" in args, got: $(cat "$args_log")"
+  fi
+
+  # Test 7: sandbox_mode survives the retry-without-model path
+  : > "$args_log"
+  local out7="$test_tmp/out7.md"
+  codex_run_review "$out7" "some-model" >/dev/null 2>&1 || true
+  local retry_line
+  retry_line=$(tail -1 "$args_log")
+  if [ "$(wc -l < "$args_log")" -eq 2 ] \
+    && echo "$retry_line" | grep -q 'sandbox_mode="read-only"' \
+    && ! echo "$retry_line" | grep -q 'model='; then
+    pass "run_review: retry without model keeps sandbox_mode"
+  else
+    fail "run_review retry sandbox" "Expected retry without model but with sandbox_mode, got: $(cat "$args_log")"
+  fi
+
   # Cleanup
+  unset MOCK_ARGS_LOG
   PATH="$orig_path"
   rm -rf "$test_tmp"
   CODEX_TMP_DIR="$orig_tmp_dir"
